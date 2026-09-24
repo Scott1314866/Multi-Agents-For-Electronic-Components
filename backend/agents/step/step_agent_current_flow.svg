@@ -1,0 +1,365 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1480" width="1800" height="1480">
+  <style>
+    text { font-family: "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, sans-serif; }
+    .title { font-size: 28px; font-weight: 700; fill: #111827; }
+    .subtitle { font-size: 14px; fill: #6b7280; }
+    .group-title { font-size: 15px; font-weight: 700; fill: #374151; }
+    .node-title { font-size: 14px; font-weight: 700; fill: #111827; text-anchor: middle; }
+    .node-sub { font-size: 11px; fill: #6b7280; text-anchor: middle; }
+    .small { font-size: 11px; fill: #4b5563; }
+    .label { font-size: 11px; font-weight: 600; fill: #374151; text-anchor: middle; }
+    .main-arrow { fill: none; stroke: #2563eb; stroke-width: 2.2; marker-end: url(#arrow-blue); }
+    .tool-arrow { fill: none; stroke: #7c3aed; stroke-width: 1.8; stroke-dasharray: 6 4; marker-end: url(#arrow-purple); }
+    .reference-arrow { fill: none; stroke: #059669; stroke-width: 2.1; marker-end: url(#arrow-green); }
+    .stop-arrow { fill: none; stroke: #ea580c; stroke-width: 1.8; marker-end: url(#arrow-orange); }
+    .fail-arrow { fill: none; stroke: #dc2626; stroke-width: 1.6; stroke-dasharray: 6 5; marker-end: url(#arrow-red); }
+  </style>
+  <defs>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0,10 3.5,0 7" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0,10 3.5,0 7" fill="#7c3aed"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0,10 3.5,0 7" fill="#059669"/>
+    </marker>
+    <marker id="arrow-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0,10 3.5,0 7" fill="#ea580c"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0,10 3.5,0 7" fill="#dc2626"/>
+    </marker>
+  </defs>
+
+  <rect width="1800" height="1480" fill="#ffffff"/>
+  <text x="38" y="44" class="title">STEP 数模生成助手 · 当前 Agent Graph</text>
+  <text x="38" y="72" class="subtitle">单张工程图图片 → 视觉证据 → Jev 路由 → Agentic Web Search → 逐视图语义 → Feature IR / 参考 STEP → 回读验证与交付</text>
+  <rect x="1510" y="28" width="248" height="44" rx="22" fill="#eff6ff" stroke="#93c5fd"/>
+  <text x="1634" y="55" text-anchor="middle" font-size="13" font-weight="700" fill="#1d4ed8">主流程：image 模式</text>
+
+  <!-- 分组背景 -->
+  <rect x="30" y="98" width="1720" height="195" rx="16" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="6 4"/>
+  <text x="50" y="126" class="group-title">A. 输入与全量视觉证据</text>
+
+  <rect x="1030" y="335" width="720" height="300" rx="16" fill="#faf5ff" stroke="#d8b4fe" stroke-dasharray="6 4"/>
+  <text x="1050" y="365" class="group-title">B. search_reference_step 内部：Agentic Web Search MCP</text>
+  <text x="1050" y="386" class="small">LLM + Reasoning + Web Search + File Search + 受控代码工具</text>
+
+  <rect x="30" y="335" width="820" height="438" rx="16" fill="#f0fdfa" stroke="#99f6e4" stroke-dasharray="6 4"/>
+  <text x="50" y="365" class="group-title">C. 逐视图证据检索与尺寸语义</text>
+
+  <rect x="30" y="882" width="1280" height="368" rx="16" fill="#f0fdf4" stroke="#86efac" stroke-dasharray="6 4"/>
+  <text x="50" y="912" class="group-title">D. 门禁通过后：参数规划、参考复用与 CAD 构建</text>
+
+  <rect x="1330" y="882" width="420" height="368" rx="16" fill="#eff6ff" stroke="#93c5fd" stroke-dasharray="6 4"/>
+  <text x="1350" y="912" class="group-title">E. 独立评测与交付</text>
+
+  <!-- 主路径箭头：输入层 -->
+  <path class="main-arrow" d="M230 195 H255"/>
+  <path class="main-arrow" d="M430 195 H455"/>
+  <path class="main-arrow" d="M635 195 H660"/>
+  <path class="main-arrow" d="M850 195 H875"/>
+  <path class="main-arrow" d="M1065 195 H1090"/>
+  <path class="main-arrow" d="M1260 195 H1285"/>
+  <path class="main-arrow" d="M1470 195 H1495"/>
+
+  <!-- Web Search 调用及返回 -->
+  <path class="tool-arrow" d="M1605 230 V318 H1625 V405"/>
+  <path class="tool-arrow" d="M1540 437 H1515"/>
+  <path class="tool-arrow" d="M1375 437 H1350"/>
+  <path class="tool-arrow" d="M1210 437 H1185"/>
+  <path class="tool-arrow" d="M1100 470 V544 H1457 V470"/>
+  <path class="main-arrow" d="M1495 230 V310 H920 V386"/>
+
+  <!-- 搜索结果分流 -->
+  <path class="main-arrow" d="M890 416 H865 V389 H130 V420"/>
+  <path class="reference-arrow" d="M920 446 V518"/>
+  <path class="reference-arrow" d="M1000 553 V850 H1125 V992"/>
+  <path class="stop-arrow" d="M840 553 H820 V389 H130 V420"/>
+
+  <!-- 逐视图语义循环 -->
+  <path class="main-arrow" d="M200 455 H220"/>
+  <path class="main-arrow" d="M370 455 H390"/>
+  <path class="main-arrow" d="M550 455 H570"/>
+  <path class="main-arrow" d="M715 455 H742"/>
+  <path class="main-arrow" d="M770 488 V585 H722 V615"/>
+  <path class="tool-arrow" d="M795 455 H820 V555 H295 V490"/>
+  <path class="main-arrow" d="M650 650 H620"/>
+  <path class="main-arrow" d="M470 650 H440"/>
+  <path class="main-arrow" d="M280 650 H156"/>
+
+  <!-- 尺寸门禁分流 -->
+  <path class="stop-arrow" d="M120 695 V790"/>
+  <path class="stop-arrow" d="M95 675 H75 V755 H370 V790"/>
+  <path class="stop-arrow" d="M145 675 H165 V740 H620 V790"/>
+  <path class="main-arrow" d="M84 675 H18 V860 H140 V950"/>
+
+  <!-- CAD 构建层 -->
+  <path class="main-arrow" d="M220 985 H250"/>
+  <path class="main-arrow" d="M420 985 H476"/>
+  <path class="reference-arrow" d="M510 951 V938 H590"/>
+  <path class="main-arrow" d="M510 1019 V1090 H590"/>
+  <path class="reference-arrow" d="M780 960 H830 V1025"/>
+  <path class="main-arrow" d="M780 1090 H810 V1025 H830"/>
+  <path class="stop-arrow" d="M685 995 V1055"/>
+  <path class="main-arrow" d="M990 1025 H1040"/>
+  <path class="main-arrow" d="M1210 1025 H1360"/>
+
+  <!-- 评测与交付 -->
+  <path class="main-arrow" d="M1530 995 H1550"/>
+  <path class="main-arrow" d="M1630 1030 V1080"/>
+
+  <!-- 全局失败轨道 -->
+  <path class="fail-arrow" d="M1740 260 V1355 H1720"/>
+  <path d="M1750 260 H1740 M1750 620 H1740 M1750 770 H1740 M1750 1240 H1740" fill="none" stroke="#dc2626" stroke-width="1.4" stroke-dasharray="5 5"/>
+
+  <!-- 输入层节点 -->
+  <g>
+    <path d="M60 160 H212 L230 178 V230 H60 Z" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+    <path d="M212 160 V178 H230" fill="none" stroke="#93c5fd"/>
+    <text x="145" y="189" class="node-title">image_path</text>
+    <text x="145" y="211" class="node-sub">唯一对外输入</text>
+  </g>
+  <g>
+    <rect x="255" y="160" width="175" height="70" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+    <text x="342" y="188" class="node-title">load_image</text>
+    <text x="342" y="210" class="node-sub">路径、哈希、输出目录</text>
+  </g>
+  <g>
+    <rect x="455" y="160" width="180" height="70" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+    <text x="545" y="188" class="node-title">preprocess_image</text>
+    <text x="545" y="210" class="node-sub">灰度、二值化、放大、纠偏</text>
+  </g>
+  <g>
+    <rect x="660" y="160" width="190" height="70" rx="10" fill="#ecfeff" stroke="#67e8f9" stroke-width="1.5"/>
+    <text x="755" y="188" class="node-title">extract_all_evidence</text>
+    <text x="755" y="210" class="node-sub">OCR + 线段 + 箭头 + 中心线</text>
+  </g>
+  <g>
+    <rect x="875" y="160" width="190" height="70" rx="10" fill="#ecfeff" stroke="#67e8f9" stroke-width="1.5"/>
+    <text x="970" y="188" class="node-title">store_evidence_locally</text>
+    <text x="970" y="210" class="node-sub">完整证据写入 State / JSON</text>
+  </g>
+  <g>
+    <rect x="1090" y="160" width="170" height="70" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+    <text x="1175" y="188" class="node-title">detect_views</text>
+    <text x="1175" y="210" class="node-sub">视图区域切分与编号</text>
+  </g>
+  <g>
+    <rect x="1285" y="160" width="185" height="70" rx="10" fill="#faf5ff" stroke="#c4b5fd" stroke-width="1.5"/>
+    <text x="1377" y="188" class="node-title">jev_route_template</text>
+    <text x="1377" y="210" class="node-sub">CAD Family Choice + Gate</text>
+  </g>
+  <g>
+    <rect x="1495" y="160" width="220" height="70" rx="10" fill="#faf5ff" stroke="#a78bfa" stroke-width="2"/>
+    <text x="1605" y="188" class="node-title">search_reference_step</text>
+    <text x="1605" y="210" class="node-sub">厂商 / 料号 / 封装 → Web</text>
+  </g>
+
+  <!-- Agentic Search 内部节点 -->
+  <g>
+    <rect x="1540" y="405" width="165" height="65" rx="10" fill="#ffffff" stroke="#c4b5fd"/>
+    <text x="1622" y="431" class="node-title">LLM Planner</text>
+    <text x="1622" y="452" class="node-sub">检索计划与目标域名</text>
+  </g>
+  <g>
+    <rect x="1375" y="405" width="140" height="65" rx="10" fill="#ffffff" stroke="#c4b5fd"/>
+    <text x="1445" y="431" class="node-title">Web Search</text>
+    <text x="1445" y="452" class="node-sub">Tavily / DDG</text>
+  </g>
+  <g>
+    <rect x="1210" y="405" width="140" height="65" rx="10" fill="#ffffff" stroke="#c4b5fd"/>
+    <text x="1280" y="431" class="node-title">Page / File</text>
+    <text x="1280" y="452" class="node-sub">网页正文与 STEP 链接</text>
+  </g>
+  <g>
+    <rect x="1050" y="405" width="135" height="65" rx="10" fill="#ffffff" stroke="#c4b5fd"/>
+    <text x="1117" y="431" class="node-title">Rank / Assess</text>
+    <text x="1117" y="452" class="node-sub">受控评分 + LLM 判断</text>
+  </g>
+  <rect x="1175" y="552" width="430" height="54" rx="9" fill="#ffffff" stroke="#ddd6fe"/>
+  <text x="1390" y="575" text-anchor="middle" font-size="12" font-weight="700" fill="#6d28d9">输出：证据、引用、文件候选、置信度、检索轨迹</text>
+  <text x="1390" y="594" text-anchor="middle" font-size="10.5" fill="#6b7280">仅访问公开 HTTP(S)，不执行下载文件中的代码</text>
+
+  <!-- 搜索命中决策与精确参考准备 -->
+  <g>
+    <polygon points="920,386 950,416 920,446 890,416" fill="#fff7ed" stroke="#fb923c" stroke-width="1.7"/>
+    <text x="920" y="412" class="node-title" font-size="12">精确</text>
+    <text x="920" y="427" class="node-sub" font-size="9">STEP?</text>
+  </g>
+  <g>
+    <rect x="840" y="518" width="160" height="70" rx="10" fill="#ecfdf5" stroke="#34d399" stroke-width="1.7"/>
+    <text x="920" y="545" class="node-title">prepare_exact_</text>
+    <text x="920" y="562" class="node-title">reference_step</text>
+    <text x="920" y="580" class="node-sub">下载、STEP 头与 CAD 回读</text>
+  </g>
+  <g transform="translate(793 461)">
+    <rect x="0" y="0" width="82" height="22" rx="4" fill="#ffffff" opacity="0.96"/>
+    <text x="41" y="15" class="label">未精确命中</text>
+  </g>
+  <g transform="translate(928 474)">
+    <rect x="0" y="0" width="54" height="22" rx="4" fill="#ffffff" opacity="0.96"/>
+    <text x="27" y="15" class="label" fill="#047857">命中</text>
+  </g>
+
+  <!-- 逐视图节点 -->
+  <g>
+    <rect x="60" y="420" width="140" height="70" rx="10" fill="#ffffff" stroke="#5eead4"/>
+    <text x="130" y="448" class="node-title">build_dimension_</text>
+    <text x="130" y="466" class="node-title">groups</text>
+    <text x="130" y="484" class="node-sub">尺寸 token + 几何邻接</text>
+  </g>
+  <g>
+    <rect x="220" y="420" width="150" height="70" rx="10" fill="#ffffff" stroke="#5eead4"/>
+    <text x="295" y="448" class="node-title">retrieve_view_</text>
+    <text x="295" y="466" class="node-title">evidence</text>
+    <text x="295" y="484" class="node-sub">按当前视图限量检索</text>
+  </g>
+  <g>
+    <rect x="390" y="420" width="160" height="70" rx="10" fill="#faf5ff" stroke="#a78bfa"/>
+    <text x="470" y="448" class="node-title">qwen_analyze_</text>
+    <text x="470" y="466" class="node-title">one_view</text>
+    <text x="470" y="484" class="node-sub">只赋语义，不编造数值</text>
+  </g>
+  <g>
+    <rect x="570" y="420" width="145" height="70" rx="10" fill="#ffffff" stroke="#5eead4"/>
+    <text x="642" y="448" class="node-title">save_view_result</text>
+    <text x="642" y="470" class="node-sub">保存证据引用结果</text>
+  </g>
+  <g>
+    <polygon points="770,422 803,455 770,488 737,455" fill="#faf5ff" stroke="#a78bfa" stroke-width="1.7"/>
+    <text x="770" y="451" class="node-title" font-size="11">还有</text>
+    <text x="770" y="466" class="node-sub" font-size="9">视图?</text>
+  </g>
+  <g>
+    <rect x="650" y="615" width="145" height="70" rx="10" fill="#ffffff" stroke="#5eead4"/>
+    <text x="722" y="643" class="node-title">merge_view_results</text>
+    <text x="722" y="665" class="node-sub">确定性合并各视图</text>
+  </g>
+  <g>
+    <rect x="470" y="615" width="150" height="70" rx="10" fill="#ffffff" stroke="#5eead4"/>
+    <text x="545" y="643" class="node-title">fuse_evidence</text>
+    <text x="545" y="665" class="node-sub">OCR、几何与语义融合</text>
+  </g>
+  <g>
+    <rect x="280" y="615" width="160" height="70" rx="10" fill="#ffffff" stroke="#5eead4"/>
+    <text x="360" y="643" class="node-title">validate_dimension_</text>
+    <text x="360" y="661" class="node-title">chain</text>
+    <text x="360" y="679" class="node-sub">单位、范围与尺寸链冲突</text>
+  </g>
+  <g>
+    <polygon points="120,605 165,650 120,695 75,650" fill="#fff7ed" stroke="#fb923c" stroke-width="1.8"/>
+    <text x="120" y="645" class="node-title" font-size="11">validate_</text>
+    <text x="120" y="660" class="node-title" font-size="11">dimensions</text>
+    <text x="120" y="675" class="node-sub" font-size="9">证据门禁</text>
+  </g>
+
+  <!-- 停止状态 -->
+  <g>
+    <rect x="40" y="790" width="190" height="62" rx="10" fill="#fff7ed" stroke="#fb923c"/>
+    <text x="135" y="817" class="node-title">stopped_insufficient</text>
+    <text x="135" y="838" class="node-sub">关键尺寸或证据不足</text>
+  </g>
+  <g>
+    <rect x="275" y="790" width="190" height="62" rx="10" fill="#fff7ed" stroke="#fb923c"/>
+    <text x="370" y="817" class="node-title">needs_human_follow_up</text>
+    <text x="370" y="838" class="node-sub">存在需人工确认的歧义</text>
+  </g>
+  <g>
+    <rect x="510" y="790" width="220" height="62" rx="10" fill="#fff7ed" stroke="#fb923c"/>
+    <text x="620" y="817" class="node-title">stopped_unsupported_template</text>
+    <text x="620" y="838" class="node-sub">Family 尚无可执行模板</text>
+  </g>
+  <g transform="translate(20 860)">
+    <rect x="0" y="0" width="48" height="22" rx="4" fill="#ffffff" opacity="0.96"/>
+    <text x="24" y="15" class="label" fill="#1d4ed8">通过</text>
+  </g>
+
+  <!-- CAD 构建层节点 -->
+  <g>
+    <rect x="60" y="950" width="160" height="70" rx="10" fill="#ffffff" stroke="#86efac"/>
+    <text x="140" y="978" class="node-title">classify_family</text>
+    <text x="140" y="1000" class="node-sub">规范化最终 Family</text>
+  </g>
+  <g>
+    <rect x="250" y="950" width="170" height="70" rx="10" fill="#f0fdf4" stroke="#4ade80" stroke-width="1.7"/>
+    <text x="335" y="978" class="node-title">create_feature_ir</text>
+    <text x="335" y="1000" class="node-sub">参数全部携带 evidence_ids</text>
+  </g>
+  <g>
+    <polygon points="510,947 548,985 510,1023 472,985" fill="#ecfdf5" stroke="#34d399" stroke-width="1.7"/>
+    <text x="510" y="980" class="node-title" font-size="10.5">参考模型</text>
+    <text x="510" y="995" class="node-sub" font-size="9">兼容?</text>
+  </g>
+  <g>
+    <rect x="590" y="925" width="190" height="70" rx="10" fill="#ecfdf5" stroke="#34d399"/>
+    <text x="685" y="953" class="node-title">prepare_reference_step</text>
+    <text x="685" y="975" class="node-sub">相似模型尺寸适配 / 回读</text>
+  </g>
+  <g>
+    <rect x="590" y="1055" width="190" height="70" rx="10" fill="#f0fdf4" stroke="#22c55e" stroke-width="1.8"/>
+    <text x="685" y="1083" class="node-title">build_step</text>
+    <text x="685" y="1105" class="node-sub">Feature IR → CadQuery / OCCT</text>
+  </g>
+  <g>
+    <rect x="830" y="990" width="160" height="70" rx="10" fill="#f0fdf4" stroke="#22c55e" stroke-width="1.8"/>
+    <text x="910" y="1018" class="node-title">verify_step</text>
+    <text x="910" y="1040" class="node-sub">重新导入、实体与尺寸验证</text>
+  </g>
+  <g>
+    <rect x="1040" y="990" width="170" height="70" rx="10" fill="#eff6ff" stroke="#60a5fa" stroke-width="1.7"/>
+    <text x="1125" y="1018" class="node-title">render_views</text>
+    <text x="1125" y="1040" class="node-sub">等轴 / 前 / 俯 / 右视图</text>
+  </g>
+  <rect x="220" y="1165" width="860" height="54" rx="9" fill="#ffffff" stroke="#bbf7d0"/>
+  <text x="650" y="1188" text-anchor="middle" font-size="12" font-weight="700" fill="#166534">模型来源：web_exact / web_similar_adapted / local_feature_ir</text>
+  <text x="650" y="1207" text-anchor="middle" font-size="10.5" fill="#6b7280">搜索候选不能补写图纸尺寸；不兼容时回退本地 Feature IR Builder</text>
+
+  <!-- 评测与交付节点 -->
+  <g>
+    <rect x="1360" y="960" width="170" height="70" rx="10" fill="#eff6ff" stroke="#60a5fa" stroke-width="1.7"/>
+    <text x="1445" y="988" class="node-title">compare_golden_</text>
+    <text x="1445" y="1006" class="node-title">reference</text>
+    <text x="1445" y="1024" class="node-sub">候选生成后才读取 Golden</text>
+  </g>
+  <g>
+    <rect x="1550" y="960" width="160" height="70" rx="10" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.8"/>
+    <text x="1630" y="988" class="node-title">finalize_result</text>
+    <text x="1630" y="1010" class="node-sub">状态、报告与路径汇总</text>
+  </g>
+  <g>
+    <path d="M1450 1080 H1610 L1630 1100 V1160 H1450 Z" fill="#eff6ff" stroke="#60a5fa" stroke-width="1.5"/>
+    <path d="M1610 1080 V1100 H1630" fill="none" stroke="#60a5fa"/>
+    <text x="1540" y="1110" class="node-title">STEP + 四视图 + JSON</text>
+    <text x="1540" y="1133" class="node-sub">验证报告 / 搜索轨迹 / Feature IR</text>
+  </g>
+  <rect x="1360" y="1182" width="360" height="40" rx="8" fill="#ffffff" stroke="#bfdbfe"/>
+  <text x="1540" y="1207" text-anchor="middle" font-size="11" font-weight="700" fill="#1d4ed8">Golden 只评测，不回写证据、IR 或模型参数</text>
+
+  <!-- 失败节点 -->
+  <g>
+    <rect x="1540" y="1320" width="180" height="70" rx="10" fill="#fef2f2" stroke="#f87171" stroke-width="1.6"/>
+    <text x="1630" y="1348" class="node-title" fill="#b91c1c">failed</text>
+    <text x="1630" y="1370" class="node-sub">任一执行节点发生异常</text>
+  </g>
+  <text x="1748" y="1288" text-anchor="end" font-size="10.5" fill="#b91c1c">全局失败轨道</text>
+
+  <!-- 图例 -->
+  <g transform="translate(40 1350)">
+    <rect x="0" y="0" width="1160" height="86" rx="12" fill="#f9fafb" stroke="#e5e7eb"/>
+    <text x="20" y="25" font-size="12" font-weight="700" fill="#374151">图例</text>
+    <line x1="76" y1="21" x2="116" y2="21" stroke="#2563eb" stroke-width="2.2" marker-end="url(#arrow-blue)"/>
+    <text x="128" y="25" class="small">主执行流</text>
+    <line x1="220" y1="21" x2="260" y2="21" stroke="#059669" stroke-width="2.1" marker-end="url(#arrow-green)"/>
+    <text x="272" y="25" class="small">参考 STEP 复用</text>
+    <line x1="405" y1="21" x2="445" y2="21" stroke="#7c3aed" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrow-purple)"/>
+    <text x="457" y="25" class="small">工具调用 / 推理循环</text>
+    <line x1="640" y1="21" x2="680" y2="21" stroke="#ea580c" stroke-width="1.8" marker-end="url(#arrow-orange)"/>
+    <text x="692" y="25" class="small">停止 / 回退</text>
+    <line x1="825" y1="21" x2="865" y2="21" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#arrow-red)"/>
+    <text x="877" y="25" class="small">异常失败</text>
+    <text x="20" y="58" class="small">State 保存全量 OCR、几何线段和尺寸组；每轮 Qwen 只接收当前视图的受限证据子集。</text>
+    <text x="20" y="76" class="small">drawing 模式仍保留用于 Golden Set 回归；本图展示当前生产入口 select_graph_mode("image")。</text>
+  </g>
+</svg>

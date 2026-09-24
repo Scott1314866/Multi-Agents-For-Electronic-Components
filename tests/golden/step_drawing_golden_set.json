@@ -1,0 +1,74 @@
+{
+  "schema_version": "1.0",
+  "cases": [
+    {
+      "case_id": "adc_sot23_6lead",
+      "category_id": "ic",
+      "subcategory_id": null,
+      "family_id": "ic/gullwing_ic",
+      "name": "6 引脚 SOT-23 ADC",
+      "drawing_path": "sample/picture/ADC_图纸12.png",
+      "reference_image_path": "sample/picture/ADC数模参考图2.png",
+      "expected_part_type": "sot23_gullwing_ic",
+      "expected_package_type": "SOT-23-6",
+      "required_features": [
+        "drafted_molded_body",
+        "gullwing_lead",
+        "two_side_lead_array"
+      ],
+      "required_dimensions": {
+        "nominal_pin_count": {"nominal": 6, "tolerance": 0.0},
+        "terminal_pitch": {"nominal": 0.95, "tolerance": 0.01},
+        "pin_span": {"nominal": 1.90, "tolerance": 0.01},
+        "total_height": {"nominal": 1.18, "tolerance": 0.01},
+        "housing_height": {"nominal": 1.10, "tolerance": 0.01},
+        "body_standoff": {"nominal": 0.08, "tolerance": 0.01},
+        "overall_width": {"nominal": 2.80, "tolerance": 0.01},
+        "body_width": {"nominal": 1.63, "tolerance": 0.01},
+        "body_length": {"nominal": 2.95, "tolerance": 0.01},
+        "terminal_length": {"nominal": 0.45, "tolerance": 0.01},
+        "terminal_thickness": {"nominal": 0.15, "tolerance": 0.01},
+        "terminal_width": {"nominal": 0.43, "tolerance": 0.01},
+        "mold_draft_angle_top_deg": {"nominal": 5.0, "tolerance": 0.1},
+        "mold_draft_angle_bottom_deg": {"nominal": 5.0, "tolerance": 0.1}
+      },
+      "known_missing_dimensions": [],
+      "expected_gate": "build_candidate",
+      "expected_topology": {"solid_count": 7, "minimum_face_count": 40}
+    },
+    {
+      "case_id": "rc_three_section_axial",
+      "category_id": "resistor",
+      "subcategory_id": null,
+      "family_id": "resistor/two_terminal_chip",
+      "name": "三段式轴向 RC/RL 器件",
+      "drawing_path": "sample/picture/RC_图纸5.png",
+      "reference_image_path": "sample/picture/RL数模参考图.png",
+      "expected_part_type": "three_section_axial_component",
+      "expected_package_type": "THREE-SECTION-AXIAL",
+      "required_features": [
+        "rounded_square_body",
+        "cylindrical_end_terminal",
+        "cylindrical_neck"
+      ],
+      "required_dimensions": {
+        "overall_length": {"nominal": 3.20, "tolerance": 0.01},
+        "body_width": {"nominal": 1.60, "tolerance": 0.01},
+        "body_height": {"nominal": 1.60, "tolerance": 0.01},
+        "left_terminal_length": {"nominal": 0.70, "tolerance": 0.01},
+        "body_length": {"nominal": 1.00, "tolerance": 0.01},
+        "right_terminal_length": {"nominal": 0.70, "tolerance": 0.01},
+        "outer_terminal_diameter": {"nominal": null, "tolerance": null},
+        "neck_diameter": {"nominal": null, "tolerance": null},
+        "body_corner_radius": {"nominal": null, "tolerance": null}
+      },
+      "known_missing_dimensions": [
+        "outer_terminal_diameter",
+        "neck_diameter",
+        "body_corner_radius"
+      ],
+      "expected_gate": "stop_insufficient_extraction",
+      "expected_topology": null
+    }
+  ]
+}

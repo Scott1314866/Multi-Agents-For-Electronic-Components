@@ -1,0 +1,29 @@
+
+tmp/
+sample/
+.firecrawl/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Environment
+.env
+.env.*
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# Generated outputs
+output/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
