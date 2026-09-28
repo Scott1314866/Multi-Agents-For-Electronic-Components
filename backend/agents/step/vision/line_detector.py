@@ -36,6 +36,7 @@ def link_tokens_to_lines(
     tokens: list[OCRToken], lines: list[GeometryLine]
 ) -> list[TokenLineLink]:
     """根据 token 高度和中心距离建立可复现的文字—线段邻接关系。"""
+    #  计算 自适应 距离 阈值
     token_heights = [max(1, token.bbox[3] - token.bbox[1]) for token in tokens]
     proximity = max(
         35.0,
@@ -100,7 +101,9 @@ def detect_geometry(
     binary = cv2.imdecode(np.fromfile(binary_path, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
     if binary is None:
         raise ValueError(f"无法读取几何检测图片：{binary_path}")
+    # Canny 边缘
     edges = cv2.Canny(binary, 50, 150, apertureSize=3)
+    # HoughLinesP 检测线段
     raw = cv2.HoughLinesP(
         edges,
         rho=1,
