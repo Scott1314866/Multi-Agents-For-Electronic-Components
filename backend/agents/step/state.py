@@ -42,6 +42,14 @@ class ImageToStepState(TypedDict, total=False):
     # 唯一必填输入
     image_path: str
 
+    # 人工回答由 interrupt/resume 接收，和原始视觉证据分别持久化。
+    package_type_hint: str
+    human_package: dict[str, Any]
+    human_route: dict[str, Any]
+    human_review: dict[str, Any]
+    human_history: list[dict[str, Any]]
+    needs_review: bool
+
     # 本地图片与视觉证据
     image_meta: dict[str, Any]
     preprocessing: dict[str, Any]
@@ -63,6 +71,10 @@ class ImageToStepState(TypedDict, total=False):
     current_view_result: dict[str, Any]
     per_view_semantics: list[dict[str, Any]]
     semantic_result: dict[str, Any]
+    semantic_collisions: list[dict[str, Any]]
+    semantic_review_attempts: int
+    semantic_review_pending_regions: list[str]
+    semantic_review_history: list[dict[str, Any]]
     fused_evidence: dict[str, Any]
     dimension_chain_result: dict[str, Any]
     dimension_gate: dict[str, Any]

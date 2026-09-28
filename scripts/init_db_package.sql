@@ -79,9 +79,12 @@ CREATE TABLE IF NOT EXISTS step_drawings (
     tenant_id       VARCHAR(64) NOT NULL DEFAULT 'tenant_default',
     task_id         UUID REFERENCES package_tasks(id) ON DELETE CASCADE,
     package_params  JSONB,
+    source_image_path VARCHAR(512),
     status          VARCHAR(16) NOT NULL DEFAULT 'pending'
-                    CHECK (status IN ('pending', 'ai_processing', 'pending_review',
-                                      'reviewed', 'failed')),
+                    CONSTRAINT step_drawings_status_hitl_check
+                    CHECK (status IN ('pending', 'ai_processing', 'awaiting_input',
+                                      'pending_review', 'reviewed', 'completed',
+                                      'rejected', 'stopped', 'failed')),
     output_path     VARCHAR(512),                         -- .step 文件（MinIO）
     preview_path    VARCHAR(512),                         -- 渲染预览图
     error_msg       TEXT,
@@ -91,6 +94,8 @@ CREATE TABLE IF NOT EXISTS step_drawings (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE step_drawings
+    ADD COLUMN IF NOT EXISTS source_image_path VARCHAR(512);
 CREATE INDEX idx_step_drawings_tenant_id ON step_drawings (tenant_id);
 CREATE INDEX idx_step_drawings_task_id ON step_drawings (task_id);
 CREATE INDEX idx_step_drawings_status ON step_drawings (status);

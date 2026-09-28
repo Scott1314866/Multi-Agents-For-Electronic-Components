@@ -1,4 +1,4 @@
-"""SOT、SOIC、TSSOP 等两侧鸥翼引脚器件族规划器。"""
+"""SOIC、TSSOP 等双侧对称鸥翼引脚器件族规划器。"""
 
 from __future__ import annotations
 
@@ -41,12 +41,16 @@ REQUIRED_PARAMETERS: tuple[str, ...] = (
     "terminal_length",
     "terminal_thickness",
     "terminal_width",
+)
+
+OPTIONAL_PARAMETERS: tuple[str, ...] = (
     "mold_draft_angle_top_deg",
     "mold_draft_angle_bottom_deg",
+    "lead_angle_deg",
 )
 
 REQUIRED_FEATURES: tuple[str, ...] = (
-    "drafted_molded_body",
+    "molded_body",
     "gullwing_lead",
     "two_side_lead_array",
 )
@@ -64,8 +68,9 @@ PARAMETER_GUIDANCE: dict[str, str] = {
     "terminal_length": "Gage Plane 细节中引脚脚长范围；无 NOM 时选 MAX",
     "terminal_thickness": "Gage Plane 细节中引脚板厚范围；无 NOM 时选 MAX，GD&T 共面度框不是板厚",
     "terminal_width": "引脚宽度；无 NOM 时选 MAX",
-    "mold_draft_angle_top_deg": "Gage Plane 附近的可见塑封拔模角范围；选择明确上限",
-    "mold_draft_angle_bottom_deg": "另一正交方向拔模角；图纸仅给一个公共范围时可派生复用",
+    "mold_draft_angle_top_deg": "可选；只接受塑封本体的明确拔模角或 α 标注，不能使用 Gage Plane 的引脚角",
+    "mold_draft_angle_bottom_deg": "可选；只接受另一塑封方向的明确拔模角或 β 标注，不得复制首个角度",
+    "lead_angle_deg": "可选；Gage Plane/Seating Plane 附近金属引脚脚部倾角，仅保留审计，不是塑封拔模角",
 }
 
 # 同一 Family 的不同图纸可能把尺寸分散在俯视、端视、侧视和局部详图中。
@@ -82,11 +87,12 @@ VIEW_PARAMETER_GROUPS: dict[str, tuple[str, ...]] = {
     "side": (
         "total_height", "housing_height", "body_standoff", "terminal_length",
         "terminal_thickness", "mold_draft_angle_top_deg",
-        "mold_draft_angle_bottom_deg",
+        "mold_draft_angle_bottom_deg", "lead_angle_deg",
     ),
     "detail": (
         "terminal_length", "terminal_thickness", "terminal_width",
         "mold_draft_angle_top_deg", "mold_draft_angle_bottom_deg",
+        "lead_angle_deg",
     ),
 }
 
@@ -94,7 +100,18 @@ _EXPECTED_UNITS: dict[str, str] = {
     "nominal_pin_count": "count",
     "mold_draft_angle_top_deg": "deg",
     "mold_draft_angle_bottom_deg": "deg",
+    "lead_angle_deg": "deg",
 }
+
+
+def _explicit_mold_angle_text(name: str, texts: Iterable[str]) -> bool:
+    """仅凭所引用的文字确认塑封角标注，不把裸角度范围当作塑封证据。"""
+    text = " ".join(texts).casefold()
+    symbol = "α" if name == "mold_draft_angle_top_deg" else "β"
+    symbol_name = "alpha" if symbol == "α" else "beta"
+    if symbol in text or re.search(rf"\b{symbol_name}\b", text):
+        return True
+    return bool(re.search(r"\bmold(?:ed|ing)?\s+draft\b|\bdraft\s+angle\b|塑封.*拔模|拔模角", text))
 
 
 def reconcile_view_semantics(
@@ -195,7 +212,40 @@ def reconcile_view_semantics(
     def cluster_max(cluster: list[dict[str, Any]]) -> float:
         return max(value for group in cluster for value in group_values(group))
 
-    assignments = list(result.assignments)
+    mold_names = {"mold_draft_angle_top_deg", "mold_draft_angle_bottom_deg"}
+    lead_context = bool(re.search(
+        r"gage\s*plane|seating\s*plane|lead\s*angle|引脚|脚部",
+        " ".join(str(token.get("text", "")) for token in token_index.values()),
+        re.I,
+    ))
+    assignments = []
+    for item in result.assignments:
+        if item.canonical_name not in mold_names:
+            assignments.append(item)
+            continue
+        referenced_ids = list(item.token_ids)
+        for group in evidence.get("dimension_groups", []):
+            if set(item.token_ids).intersection(group.get("token_ids", [])):
+                referenced_ids.extend(group.get("context_token_ids", []))
+                referenced_ids.extend(group.get("row_label_token_ids", []))
+        referenced_ids = list(dict.fromkeys(
+            token_id for token_id in referenced_ids if token_id in token_index
+        ))
+        if _explicit_mold_angle_text(
+            item.canonical_name,
+            (str(token_index[token_id].get("text", "")) for token_id in referenced_ids),
+        ):
+            assignments.append(item.model_copy(update={
+                "token_ids": referenced_ids,
+                "target_feature": f"explicit_mold_draft:{item.canonical_name}",
+            }))
+        elif lead_context and not any(
+            existing.canonical_name == "lead_angle_deg" for existing in assignments
+        ):
+            assignments.append(item.model_copy(update={
+                "canonical_name": "lead_angle_deg",
+                "target_feature": "gullwing_lead:foot_angle",
+            }))
     normalized_view = result.view_type.casefold()
     identity_groups = [
         group
@@ -239,7 +289,7 @@ def reconcile_view_semantics(
             across = sorted(across, key=cluster_max, reverse=True)[:2]
             overall_cluster, body_cluster = across[0], across[1]
             along_cluster = max(along, key=cluster_max)
-            replaced = {"overall_width", "body_width", "body_length", "pin_span"}
+            replaced = {"overall_width", "body_width", "body_length"}
             assignments = [
                 item for item in assignments if item.canonical_name not in replaced
             ]
@@ -465,25 +515,10 @@ def reconcile_view_semantics(
             if any(angle_pattern.match(text) for text in group_texts(group))
             and group_center(group)[0] > region_left + region_width * 0.5
         ]
-        if angle_groups:
+        if angle_groups and lead_context and "lead_angle_deg" not in assigned_names:
             angle_cluster = max(angle_groups, key=lambda group: cluster_max([group]))
-            for angle_name in (
-                "mold_draft_angle_top_deg",
-                "mold_draft_angle_bottom_deg",
-            ):
-                if angle_name not in assigned_names:
-                    assignments.append(assignment(angle_name, [angle_cluster]))
-                    assigned_names.add(angle_name)
-
-        # 复合视图中的 housing_height 最容易被主俯视宽度误占。只要总体高度
-        # 与离板高度均有独立证据，就删除该不可靠直接映射，交给后续确定性
-        # 尺寸链 ``total_height - body_standoff`` 派生本体高度。
-        assigned_names = {item.canonical_name for item in assignments}
-        if {"total_height", "body_standoff"}.issubset(assigned_names):
-            assignments = [
-                item for item in assignments
-                if item.canonical_name != "housing_height"
-            ]
+            assignments.append(assignment("lead_angle_deg", [angle_cluster]))
+            assigned_names.add("lead_angle_deg")
 
         detail_groups = [
             group for group in groups
@@ -552,17 +587,11 @@ def reconcile_view_semantics(
             ordered = sorted(linear_clusters, key=cluster_max)
             thickness_cluster = ordered[0]
             length_cluster = ordered[-1]
-            replaced = {
-                "total_height", "housing_height", "body_standoff",
-                "terminal_thickness", "terminal_length",
-            }
-            assignments = [
-                item for item in assignments if item.canonical_name not in replaced
-            ]
-            assignments.extend([
-                assignment("terminal_thickness", thickness_cluster),
-                assignment("terminal_length", length_cluster),
-            ])
+            assigned_names = {item.canonical_name for item in assignments}
+            if "terminal_thickness" not in assigned_names:
+                assignments.append(assignment("terminal_thickness", thickness_cluster))
+            if "terminal_length" not in assigned_names:
+                assignments.append(assignment("terminal_length", length_cluster))
 
     if "composite" in normalized_view:
         # 低对比度图纸可能只能保留整页复合区域。主俯视图中的三个大尺寸簇
@@ -754,22 +783,10 @@ def reconcile_view_semantics(
             group for group in groups
             if any(angle_pattern.match(text) for text in raw_group_texts(group))
         ]
-        if angle_groups:
+        if angle_groups and lead_context and "lead_angle_deg" not in assigned_names:
             angle_cluster = max(angle_groups, key=lambda group: cluster_max([group]))
-            for angle_name in (
-                "mold_draft_angle_top_deg",
-                "mold_draft_angle_bottom_deg",
-            ):
-                if angle_name not in assigned_names:
-                    assignments.append(assignment(angle_name, [angle_cluster]))
-                    assigned_names.add(angle_name)
-
-        assigned_names = {item.canonical_name for item in assignments}
-        if {"total_height", "body_standoff"}.issubset(assigned_names):
-            assignments = [
-                item for item in assignments
-                if item.canonical_name != "housing_height"
-            ]
+            assignments.append(assignment("lead_angle_deg", [angle_cluster]))
+            assigned_names.add("lead_angle_deg")
 
     return result.model_copy(update={"assignments": assignments})
 
@@ -808,8 +825,8 @@ def plan_from_evidence(
         source_image_sha256: 唯一输入工程图图片的 SHA256。
 
     Returns:
-        复用 ``drafted_body_loft`` 与 ``gullwing_lead_array`` 的证据版
-        Feature IR；每个数值参数均携带非空 ``evidence_ids``。
+        完整塑封角证据使用 ``drafted_body_loft``，否则使用明确待审核的
+        ``molded_body_box`` 包络；引脚主要尺寸始终要求证据完整。
 
     Raises:
         ValueError: 器件族不匹配、缺少关键字段、单位不符、证据为空，
@@ -845,8 +862,8 @@ def plan_from_evidence(
 
     count_value = indexed["nominal_pin_count"].value
     count = int(round(count_value))
-    if count <= 0 or abs(count_value - count) > 1e-9:
-        raise ValueError("鸥翼封装引脚数量必须是正整数")
+    if count < 4 or count % 2 or abs(count_value - count) > 1e-9:
+        raise ValueError("双侧对称鸥翼封装引脚数量必须是大于等于 4 的偶数")
 
     positive_dimensions = (
         "terminal_pitch",
@@ -866,17 +883,47 @@ def plan_from_evidence(
     if indexed["body_standoff"].value < 0.0:
         raise ValueError("鸥翼封装本体离板高度不能为负数")
 
-    body = EvidenceCADFeature(
-        feature_id="molded_body",
-        feature_type="drafted_body_loft",
-        parameters={
-            "length": source("body_length"),
-            "width": source("body_width"),
-            "height": source("housing_height"),
-            "standoff": source("body_standoff"),
+    valid_optional = {
+        name: indexed[name]
+        for name in OPTIONAL_PARAMETERS
+        if name in indexed
+        and indexed[name].unit == "deg"
+        and indexed[name].evidence_ids
+        and indexed[name].token_bboxes
+        and 0.0 <= indexed[name].value < 90.0
+        and (name == "lead_angle_deg" or _explicit_mold_angle_text(name, indexed[name].raw_texts))
+    }
+    draft_names = ("mold_draft_angle_top_deg", "mold_draft_angle_bottom_deg")
+    has_explicit_draft = all(
+        name in valid_optional
+        and _explicit_mold_angle_text(name, valid_optional[name].raw_texts)
+        for name in draft_names
+    )
+    if has_explicit_draft:
+        top_tokens = set(valid_optional[draft_names[0]].token_ids)
+        bottom_tokens = set(valid_optional[draft_names[1]].token_ids)
+        # 不能把同一组角度证据复制成两个独立塑封角。
+        has_explicit_draft = bool(top_tokens - bottom_tokens and bottom_tokens - top_tokens)
+    body_parameters = {
+        "length": source("body_length"),
+        "width": source("body_width"),
+        "height": source("housing_height"),
+        "standoff": source("body_standoff"),
+    }
+    assumptions = []
+    if has_explicit_draft:
+        body_parameters.update({
             "draft_top_deg": source("mold_draft_angle_top_deg"),
             "draft_bottom_deg": source("mold_draft_angle_bottom_deg"),
-        },
+        })
+    else:
+        assumptions.append("未标注完整塑封拔模细节，输出本体包络，需人工审核。")
+    if "lead_angle_deg" in valid_optional:
+        assumptions.append("引脚倾角仅保留为审计证据，未用作塑封拔模参数。")
+    body = EvidenceCADFeature(
+        feature_id="molded_body",
+        feature_type="drafted_body_loft" if has_explicit_draft else "molded_body_box",
+        parameters=body_parameters,
     )
     leads = EvidenceCADFeature(
         feature_id="two_side_terminal_array",
@@ -924,8 +971,10 @@ def plan_from_evidence(
         ),
         features=[body, leads],
         expected_geometry=expected_geometry,
-        source_dimensions={name: source(name) for name in REQUIRED_PARAMETERS},
-        assumptions=[],
+        source_dimensions={
+            name: source(name) for name in (*REQUIRED_PARAMETERS, *valid_optional)
+        },
+        assumptions=assumptions,
     ).model_dump()
 
 

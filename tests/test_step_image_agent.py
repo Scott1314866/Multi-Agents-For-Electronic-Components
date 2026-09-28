@@ -581,6 +581,7 @@ def _synthetic_quad_gullwing_fused(*, pin_count: int = 32) -> FusedEvidence:
         "terminal_span": (per_side - 1) * 0.8,
         "terminal_pitch": 0.8,
         "terminal_length": 1.0,
+        "lead_projection": 1.0,
         "terminal_width": 0.3,
         "terminal_thickness": 0.15,
     }
@@ -1160,9 +1161,11 @@ def test_graph_exposes_state_prompt_separation_and_view_loop():
     graph = build_image_to_step_graph().get_graph()
     node_names = set(graph.nodes)
     assert {
+        "ask_package",
         "extract_all_evidence",
         "store_evidence_locally",
         "detect_views",
+        "confirm_template",
         "jev_route_template",
         "build_dimension_groups",
         "retrieve_view_evidence",
@@ -1174,11 +1177,15 @@ def test_graph_exposes_state_prompt_separation_and_view_loop():
         "prepare_exact_reference_step",
         "validate_reference_step_candidates",
         "prepare_reference_step",
+        "review_result",
     }.issubset(node_names)
     edges = {(edge.source, edge.target) for edge in graph.edges}
+    assert ("__start__", "ask_package") in edges
+    assert ("detect_views", "confirm_template") in edges
+    assert ("confirm_template", "jev_route_template") in edges
+    assert ("finalize_result", "review_result") in edges
     assert ("save_view_result", "retrieve_view_evidence") in edges
     assert ("save_view_result", "merge_view_results") in edges
-    assert ("detect_views", "jev_route_template") in edges
     assert ("jev_route_template", "search_reference_step") in edges
     assert ("search_reference_step", "prepare_exact_reference_step") in edges
     assert ("search_reference_step", "build_dimension_groups") in edges
@@ -1548,10 +1555,42 @@ def test_gullwing_composite_projection_reconciles_cross_view_semantic_drift():
     assert indexed["body_length"].token_ids == ["bl"]
     assert indexed["terminal_thickness"].token_ids == ["thickness"]
     assert indexed["terminal_length"].token_ids == ["length"]
-    assert indexed["mold_draft_angle_bottom_deg"].token_ids == ["angle"]
+    # The unlabeled angle remains in source OCR but is not assigned to either
+    # molded-body side or treated as a lead angle without lead/Gage context.
+    assert any(token["token_id"] == "angle" for token in tokens)
+    assert "mold_draft_angle_top_deg" not in indexed
+    assert "mold_draft_angle_bottom_deg" not in indexed
+    assert "lead_angle_deg" not in indexed
     assert indexed["total_height"].token_ids == ["height"]
     assert indexed["body_standoff"].token_ids == ["standoff"]
-    assert "housing_height" not in indexed
+    # Preserve the explicitly mapped housing-height evidence; deriving A-A1 must
+    # not erase a direct assignment from the same source bundle.
+    assert indexed["housing_height"].token_ids == ["bw"]
+
+
+def test_invalid_preserved_housing_height_is_rejected_by_dimension_chain(tmp_path: Path):
+    """保留直接候选不代表信任错误值；A 应约束 A2+A1。"""
+    base = _synthetic_gullwing_fused()
+    values = {"housing_height": 4.6, "total_height": 1.3, "body_standoff": 0.06}
+    fused = base.model_copy(update={
+        "family_id": "ic/gullwing_ic",
+        "parameters": [
+            item.model_copy(update={"value": values[item.canonical_name]})
+            if item.canonical_name in values else item
+            for item in base.parameters
+        ],
+    })
+    chain = asyncio.run(image_nodes.validate_dimension_chain_node({
+        "fused_evidence": fused.model_dump(),
+        "output_dir": str(tmp_path),
+    }))
+    assert "total_height!=housing_height+body_standoff" in chain["dimension_chain_result"]["conflicts"]
+    gate = asyncio.run(image_nodes.validate_dimensions_node({
+        "fused_evidence": chain["fused_evidence"],
+        "output_dir": str(tmp_path),
+    }))
+    assert gate["dimension_gate"]["status"] == "stopped_insufficient_extraction"
+    assert "total_height!=housing_height+body_standoff" in gate["dimension_gate"]["conflicting_fields"]
 
 
 def test_gullwing_top_crop_separates_height_chain_from_terminal_detail():
@@ -2087,8 +2126,8 @@ def test_qfn56_routes_by_structure_and_builds_exposed_pad():
     assert "exposed_pad_length" in feature_ir["features"][1]["parameters"]
 
 
-def test_quad_gullwing_derives_pitch_and_terminal_length_from_evidence_chain():
-    """缺少直接 pitch/脚长时只能按同图尺寸链派生，不能写默认值。"""
+def test_quad_gullwing_derives_pitch_but_requires_direct_terminal_foot_length():
+    """Pitch 可由跨距派生；缺少脚底 L 时不能用外伸长度伪造。"""
     fused = _synthetic_quad_gullwing_fused(pin_count=32)
     fused.parameters = [
         item for item in fused.parameters
@@ -2100,9 +2139,16 @@ def test_quad_gullwing_derives_pitch_and_terminal_length_from_evidence_chain():
     indexed = {item.canonical_name: item for item in derived.parameters}
 
     assert indexed["terminal_pitch"].value == pytest.approx(0.8)
-    assert indexed["terminal_length"].value == pytest.approx(1.0)
+    assert "terminal_length" not in indexed
     assert "terminal_pitch" not in derived.unresolved_fields
+    assert "terminal_length" in derived.unresolved_fields
     assert len(indexed["terminal_pitch"].evidence_ids) >= 2
+    with pytest.raises(ValueError, match="terminal_length"):
+        create_evidence_feature_ir(
+            quad_gullwing_ic.FAMILY_ID,
+            fused.model_dump(),
+            source_image_sha256="q" * 64,
+        )
 
 
 def test_two_terminal_family_is_registered_and_geometry_uses_feature_ir():

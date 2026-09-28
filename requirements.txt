@@ -55,6 +55,7 @@ langchain-openai            1.5.1
 langchain-protocol          0.0.18
 langgraph                   1.0.9
 langgraph-checkpoint        4.2.0
+langgraph-checkpoint-postgres 3.1.2
 langgraph-checkpoint-redis  0.5.1
 langgraph-prebuilt          1.0.13
 langgraph-sdk               0.3.15
@@ -84,6 +85,7 @@ pydantic                    2.11.7
 pydantic_core               2.33.2
 pydantic-settings           2.10.1
 pyparsing                   3.3.1
+psycopg[binary,pool]        3.3.5
 PyMuPDF                     1.28.2
 Pygments                    2.20.0
 PyJWT                       2.13.0

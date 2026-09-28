@@ -25,19 +25,15 @@ from backend.agents.step.families.taxonomy import (
 
 
 JEV_CHOICE_CRITERIA = {
-    "resistor": "01 电阻；仅用于明确的电阻物料。",
-    "capacitor": "02 电容；仅用于明确的电容或 MLCC 物料。",
-    "inductor": "03 电感；用于明确的电感物料。",
-    "diode": "04 二极管；用于明确的二极管物料。",
-    "transistor": "05 晶体管；用于明确的分立晶体管物料。",
-    "connector": (
-        "06 连接器；CN 是硬件接口物料规格书，MT 是结构物料规格书。"
-    ),
-    "ic": (
-        "07 集成芯片；包括 ADC、MCU、逻辑芯片、存储器、运放及典型 IC 封装。"
-    ),
-    "misc": "08 功率器及不能归入前七类的 Misc 物料。",
-    "unknown": "当前证据不足，无法可靠选择 CAD 建模模板类别。",
+    "resistor":     "01 电阻；仅用于明确的电阻物料。",
+    "capacitor":    "02 电容；仅用于明确的电容或 MLCC 物料。",
+    "inductor":     "03 电感；用于明确的电感物料。",
+    "diode":        "04 二极管；用于明确的二极管物料。",
+    "transistor":   "05 晶体管；用于明确的分立晶体管物料。",
+    "connector":    "06 连接器；CN 是硬件接口物料规格书，MT 是结构物料规格书。",
+    "ic":           "07 集成芯片；包括 ADC、MCU、逻辑芯片、存储器、运放及典型 IC 封装。",
+    "misc":         "08 功率器及不能归入前七类的 Misc 物料。",
+    "unknown":      "当前证据不足，无法可靠选择 CAD 建模模板类别。",
 }
 
 MIN_TOP_PROBABILITY = 0.70
@@ -88,8 +84,7 @@ def build_jev_state(
         "task": "select_one_of_eight_component_categories",
         "drawing_text": identity_texts,
         "package_type": str(classification.get("package_type", "")),
-        # 下划线字段仅供本地映射和失败回退，调用 Jev 时会被剔除，避免模型
-        # 直接复述 Qwen 已给出的几何 Family。
+        # 下划线字段仅供本地映射和失败回退，调用 Jev 时会被剔除，避免模型直接复述 Qwen 已给出的几何 Family。
         "_fallback_geometric_family": str(classification.get("family_id", "")),
         "_fallback_category": str(classification.get("category_id", "")),
         "_fallback_subcategory": classification.get("subcategory_id"),

@@ -33,23 +33,17 @@ logger = get_logger(__name__)
 _AGENT_DISPLAY = {
     AgentType.QA:        "智能问答",
     AgentType.EXAM:      "试卷批改",
-    AgentType.RESUME:    "简历审查",
     AgentType.INTERVIEW: "模拟面试",
 }
 
 # ── 非 QA 意图的引导消息和跳转路径 ─────────────────────────────
-# exam/resume/interview 需要专门的页面（上传文件/选岗位），统一入口不直接执行，
+# exam/interview 需要专门的页面（上传文件/选岗位），统一入口不直接执行，
 # 而是返回引导卡片，让前端把用户导到对应功能页。
 _GUIDANCE = {
     AgentType.EXAM: {
         "message": "检测到您需要进行试卷批改。请前往「试卷批改」页面上传 Word 格式答卷，AI 将自动完成三轨批改并分析知识薄弱点。",
         "action_label": "前往试卷批改",
         "action_url": "/exam",
-    },
-    AgentType.RESUME: {
-        "message": "检测到您需要进行简历审查。请前往「简历审查」页面上传 PDF 格式简历，AI 将从六个维度进行评分并给出改进建议。",
-        "action_label": "前往简历审查",
-        "action_url": "/resume",
     },
     AgentType.INTERVIEW: {
         "message": "检测到您需要进行模拟面试。请前往「模拟面试」页面选择目标岗位和技术方向，AI 将进行技术原理与项目深挖双轨考察。",
@@ -112,10 +106,9 @@ _CAPABILITY_RE = re.compile(
 )
 
 
-# ── 多 Agent 能力说明（HELLO / IDENTITY / CAPABILITY 共享结尾）────
-_MULTI_AGENT_TIP = (
-    "- **多 Agent 协同**：描述综合需求（如「帮我准备求职」），"
-    "AI 将自动串联简历审查 + 模拟面试两个 Agent 协同为您服务\n"
+# ── STEP 数模生成能力说明（HELLO / IDENTITY / CAPABILITY 共享结尾）──
+_STEP_TIP = (
+    "- **STEP 数模生成**：上传工程图图片，AI 将识别图纸并生成 STEP 三维模型\n"
 )
 
 # ── 五类回复模板（节选问候，其余结构相同）──────────────────────────
@@ -124,9 +117,9 @@ _REPLY_HELLO = (
     "我可以帮您：\n"
     "- **技术问答**：直接输入问题，我会从知识库中检索并解答\n"
     "- **试卷批改**：告诉我「我要提交试卷」，AI 完成三轨批改和知识薄弱点分析\n"
-    "- **简历审查**：告诉我「帮我看看简历」，AI 给出六维度评分与改进建议\n"
+    "- **STEP 数模生成**：上传工程图图片，生成 STEP 三维模型\n"
     "- **模拟面试**：告诉我「我要模拟面试」，开启技术双轨考察\n"
-    + _MULTI_AGENT_TIP
+    + _STEP_TIP
     + "\n请问有什么可以帮到您？"
 )
 
@@ -145,9 +138,9 @@ _REPLY_IDENTITY = (
     "我由多个专业 Agent 协同构成：\n"
     "- **智能问答 Agent**：基于 RAG 知识库，7x24 即时解答技术问题\n"
     "- **试卷批改 Agent**：AI 三轨并行批改 + 知识薄弱点分析\n"
-    "- **简历审查 Agent**：六维度质量评审，提供原文定位的修改建议\n"
+    "- **STEP 数模生成 Agent**：识别工程图并生成可下载的 STEP 三维模型\n"
     "- **模拟面试 Agent**：技术原理 + 项目深挖双轨考察，生成结构化报告\n"
-    + _MULTI_AGENT_TIP
+    + _STEP_TIP
     + "\n有什么可以帮到您吗？"
 )
 
@@ -156,10 +149,10 @@ _REPLY_CAPABILITY = (
     "**单 Agent 直达**\n"
     "- 直接输入技术问题 → 智能问答（RAG 知识库检索）\n"
     "- 「提交试卷批改」 → 上传 Word 答卷，AI 完成批改并分析薄弱点\n"
-    "- 「审查我的简历」 → 上传 PDF 简历，六维度评分 + 改进建议\n"
+    "- 「生成 STEP 模型」 → 上传工程图图片，AI 识别并生成 STEP 三维模型\n"
     "- 「开始模拟面试」 → 选择岗位方向，进入双轨面试考察\n\n"
-    "**多 Agent 协同**\n"
-    + _MULTI_AGENT_TIP
+    "**工程图建模**\n"
+    + _STEP_TIP
     + "\n直接告诉我您的需求，我会自动路由到最合适的 Agent。"
 )
 
@@ -194,15 +187,14 @@ def _pre_filter(text: str) -> str | None:
 
     return None                                      # 五类都没命中 → 交给 LLM 路由
 
-# ── LLM 路由 Prompt：让模型把用户输入归到 6 类之一，返回 JSON ──
+# ── LLM 路由 Prompt：让模型把用户输入归到 5 类之一，返回 JSON ──
 _ROUTE_PROMPT = """判断用户需求应路由到哪个功能。
 
 可选功能：
 - qa          : 技术知识问答（用户直接提问，不涉及文件上传）
 - exam        : 试卷/作业批改（需上传 Word 答卷，用户提到"批改""作业""提交试卷"等）
-- resume      : 简历审查（需上传 PDF 简历，用户提到"简历""帮我看看简历"等）
 - interview   : 模拟面试（用户提到"面试""练习面试""模拟面试"等）
-- multi_agent : 综合求职准备（用户同时提到简历 + 面试，或"全套""一条龙""求职准备"等）
+- step        : STEP 三维模型生成（需上传工程图图片，用户提到"STEP""工程图建模""生成三维模型"等）
 - clarify     : 意图不明确，无法判断，需要追问
 
 严格按以下 JSON 格式返回，不要有其他内容：
@@ -210,13 +202,12 @@ _ROUTE_PROMPT = """判断用户需求应路由到哪个功能。
 
 用户输入：{message}"""
 
-# label → AgentType 映射（multi_agent / clarify 用 QA 占位）
+# label → AgentType 映射（step / clarify 用 QA 占位，业务分发由 label 决定）
 _LABEL_TO_AGENT: dict[str, AgentType] = {
     "qa":          AgentType.QA,
     "exam":        AgentType.EXAM,
-    "resume":      AgentType.RESUME,
     "interview":   AgentType.INTERVIEW,
-    "multi_agent": AgentType.QA,   # pipeline 入口，以 QA 作占位
+    "step":        AgentType.QA,
     "clarify":     AgentType.QA,
 }
 
@@ -224,9 +215,8 @@ _LABEL_TO_AGENT: dict[str, AgentType] = {
 _LABEL_TO_MODE: dict[str, ExecutionMode] = {
     "qa":          ExecutionMode.SINGLE,
     "exam":        ExecutionMode.SINGLE,
-    "resume":      ExecutionMode.SINGLE,
     "interview":   ExecutionMode.SINGLE,
-    "multi_agent": ExecutionMode.PIPELINE,
+    "step":        ExecutionMode.SINGLE,
     "clarify":     ExecutionMode.CLARIFY,
 }
 
@@ -236,7 +226,7 @@ _VALID_LABELS = frozenset(_LABEL_TO_AGENT.keys())    # 合法 label 集合（校
 @dataclass
 class _RouteResult:
     """LLM 路由结果，对齐前端展示需要的字段。"""
-    label:          str            # "qa"|"exam"|"resume"|"interview"|"multi_agent"|"clarify"
+    label:          str            # "qa"|"exam"|"interview"|"step"|"clarify"
     agent_type:     AgentType      # 由 label 映射
     execution_mode: ExecutionMode  # 由 label 映射
     confidence:     float          # LLM 路由固定返回 0.85（无置信度概念，仅供前端展示）
@@ -307,9 +297,8 @@ async def unified_chat_stream(
         2. LLM 路由判断（_llm_route，DeepSeek 直接分类，无本地模型）
         3. 推送 routing_decision 事件（前端显示路由卡片）
         4a. qa 路由      → 流式执行 QA Agent
-        4b. exam/resume/interview → 推送 guidance 引导跳转
-        4c. multi_agent  → 推送求职全链路 pipeline 计划
-        4d. clarify      → 推送追问提示
+        4b. exam/interview/step → 推送 guidance 引导跳转
+        4c. clarify      → 推送追问提示
     """
 
     async def event_generator():                      # 异步生成器：逐个 yield SSE 事件
@@ -326,8 +315,11 @@ async def unified_chat_stream(
         # ── Step 2：推送路由决策卡片（前端显示"已转接到 XX"）──────
         yield _sse({
             "type":           "routing_decision",
-            "agent_type":     decision.agent_type.value,
-            "agent_display":  _AGENT_DISPLAY.get(decision.agent_type, ""),  # 中文名
+            "agent_type":     "step" if decision.label == "step" else decision.agent_type.value,
+            "agent_display":  (
+                "STEP 数模生成" if decision.label == "step"
+                else _AGENT_DISPLAY.get(decision.agent_type, "")
+            ),
             "confidence":     round(decision.confidence, 4),
             "reason":         decision.reason,
             "execution_mode": decision.execution_mode.value,
@@ -341,9 +333,15 @@ async def unified_chat_stream(
             async for event in _stream_qa_agent(req, current_user):  # 把 QA 的流式事件透传出去
                 yield event
 
-        # ── 3b：exam / resume / interview → 引导跳转 ────────
-        elif label in ("exam", "resume", "interview"):
-            guidance = _GUIDANCE.get(decision.agent_type, {})    # 取对应引导文案
+        # ── 3b：exam / interview / step → 引导跳转 ─────────
+        elif label in ("exam", "interview", "step"):
+            guidance = {
+                "step": {
+                    "message": "检测到您需要生成 STEP 三维模型。请前往 STEP 数模生成页面上传工程图图片。",
+                    "action_label": "前往 STEP 数模生成",
+                    "action_url": "/step",
+                }
+            }.get(label, _GUIDANCE.get(decision.agent_type, {}))
             yield _sse({
                 "type":         "guidance",
                 "message":      guidance.get("message", "请前往对应功能页面操作"),
@@ -351,41 +349,12 @@ async def unified_chat_stream(
                 "action_url":   guidance.get("action_url", "/dashboard"),
             })
 
-        # ── 3c：multi_agent → 求职全链路 Pipeline 计划 ──────
-        elif label == "multi_agent":
-            yield _sse({
-                "type":     "pipeline_plan",
-                "title":    "求职全链路",
-                "intro":    "已为您规划「求职全链路」，建议按顺序完成以下两个步骤，"
-                            "简历审查结果将作为模拟面试的参考依据。",
-                "steps": [
-                    {
-                        "step":         1,
-                        "agent_type":   "resume",
-                        "label":        "简历审查",
-                        "desc":         "上传 PDF 简历，AI 从六个维度评分并给出带原文定位的改进建议",
-                        "action_label": "开始简历审查",
-                        "action_url":   "/resume",
-                        "tip":          "建议先完成此步骤，审查结果将作为面试的参考依据",
-                    },
-                    {
-                        "step":         2,
-                        "agent_type":   "interview",
-                        "label":        "模拟面试",
-                        "desc":         "基于简历背景，进行技术原理 + 项目深挖双轨考察，生成结构化雷达图报告",
-                        "action_label": "开始模拟面试",
-                        "action_url":   "/interview",
-                        "tip":          "完成简历审查后进行效果更佳",
-                    },
-                ],
-            })
-
         # ── 3d：clarify → 追问提示 ───────────────────────────
         else:
             yield _sse({
                 "type":    "guidance",
                 "message": "您的问题我还不太确定应该用哪个功能来帮您，能否描述得更具体一些？"
-                           "例如：您是想提问技术知识、提交试卷批改、审查简历，还是进行模拟面试？",
+                           "例如：您是想提问技术知识、提交试卷批改、生成 STEP 三维模型，还是进行模拟面试？",
                 "action_label": "",
                 "action_url":   "",
             })

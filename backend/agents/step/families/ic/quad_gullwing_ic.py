@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from backend.agents.step.features import gullwing_lead
 from backend.agents.step.ir.schemas import EvidenceCADFeature, EvidenceFeatureIR, EvidenceValue
 from backend.agents.step.vision.schemas import FusedEvidence, FusedParameter
 
@@ -22,6 +23,7 @@ REQUIRED_PARAMETERS: tuple[str, ...] = (
     "terminal_span",
     "terminal_pitch",
     "terminal_length",
+    "lead_projection",
     "terminal_width",
     "terminal_thickness",
 )
@@ -35,7 +37,7 @@ REQUIRED_FEATURES: tuple[str, ...] = (
 PARAMETER_GUIDANCE: dict[str, str] = {
     "nominal_pin_count": "标题中的 N-pin 或明确引脚总数",
     "total_height": "符号 A；无 TYP 时选择明确 MAX 作为包络",
-    "housing_height": "包络本体高度；可由总体高度 A 减离板高度 A1 确定性派生",
+    "housing_height": "符号 A2，本体高度；仅在缺失时由总体高度 A 减离板高度 A1 派生，不覆盖明确 A2",
     "body_standoff": "符号 A1；选择明确 MAX 作为包络离板高度",
     "overall_length": "符号 D，含两侧引脚的总体长度",
     "overall_width": "符号 E，含两侧引脚的总体宽度",
@@ -43,7 +45,8 @@ PARAMETER_GUIDANCE: dict[str, str] = {
     "body_width": "符号 E1，塑封本体宽度",
     "terminal_span": "符号 D3/E3，同一边首末引脚中心跨距",
     "terminal_pitch": "相邻引脚中心间距；可由跨距和每边数量确定性派生",
-    "terminal_length": "引脚从本体边缘到总体边缘的长度；可由总体与本体尺寸派生",
+    "terminal_length": "符号 L，引脚脚底长度；必须引用脚部尺寸证据，不得用总体与本体尺寸差替代",
+    "lead_projection": "引脚总体外伸，可由 (D-D1)/2 与 (E-E1)/2 一致时派生；不是脚底长度 L",
     "terminal_width": "符号 b；优先 TYP，否则选择明确 MAX",
     "terminal_thickness": "符号 c；优先 TYP，否则选择明确 MAX",
 }
@@ -123,6 +126,21 @@ def plan_from_evidence(
     overall_length = indexed["overall_length"].value
     overall_width = indexed["overall_width"].value
     total_height = indexed["total_height"].value
+    # 四边引脚特征复用相同的 YZ 截面，绕 Z 旋转不改变竖直包络。
+    # 直接消费该特征的实际轮廓，避免复制引出高度/板厚等内部几何规则。
+    lead_profile = gullwing_lead._profile({
+        "lead_thickness": indexed["terminal_thickness"].value,
+        "body_width": indexed["body_width"].value,
+        "overall_width": overall_width,
+        "foot_length": indexed["terminal_length"].value,
+        "body_standoff": indexed["body_standoff"].value,
+        "body_height": indexed["housing_height"].value,
+    }, side=1)
+    body_top = indexed["housing_height"].value + indexed["body_standoff"].value
+    modeled_zmin = min(indexed["body_standoff"].value, *(z for _, z in lead_profile))
+    modeled_zmax = max(body_top, *(z for _, z in lead_profile))
+    if modeled_zmax > total_height + 1e-6:
+        raise ValueError("按本体及引脚实际尺寸构造的高度超过图纸 A 包络上限")
     return EvidenceFeatureIR(
         source_image_sha256=source_image_sha256,
         family_id=FAMILY_ID,
@@ -138,20 +156,23 @@ def plan_from_evidence(
             "solid_count": count + 1,
             "minimum_solid_count": count + 1,
             "minimum_face_count": (count + 1) * 4,
+            "height_upper_bound": total_height,
             "bounding_box": {
                 "xmin": -overall_length / 2.0,
                 "xmax": overall_length / 2.0,
                 "ymin": -overall_width / 2.0,
                 "ymax": overall_width / 2.0,
-                "zmin": 0.0,
-                "zmax": total_height,
+                "zmin": modeled_zmin,
+                "zmax": modeled_zmax,
             },
         },
         source_dimensions={name: _value(indexed[name]) for name in REQUIRED_PARAMETERS},
         assumptions=[
             "尺寸表没有 TYP 时使用图纸明确 MAX 构建包络模型。",
+            "本体按图纸 A2 与 A1 所选名义/实际尺寸建模，顶部为 A2+A1；A 仅作包络高度上限，不回写 A2。",
+            "预期竖直包络同时计入本体与实际引脚轮廓，引脚超出本体时使用引脚极值并检查 A 上限。",
             "terminal_pitch 由引脚总数与同边首末引脚跨距确定性计算。",
-            "terminal_length 由总体尺寸与塑封本体尺寸差的一半确定性计算。",
+            "terminal_length 采用图纸脚底长度 L 的证据；lead_projection 表示独立的总体外伸约束。",
             "图纸未标注的丝印、引脚1凹点尺寸和底部散热焊盘不进入模型。",
         ],
     ).model_dump()

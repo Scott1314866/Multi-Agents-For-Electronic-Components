@@ -2,6 +2,13 @@
 
 from langgraph.graph import END, START, StateGraph
 
+from backend.agents.step.human_nodes import (
+    ask_package_node,
+    confirm_template_node,
+    review_result_node,
+    route_after_human_input,
+)
+
 from backend.agents.step.drawing_nodes import (
     build_drawing_step_node,
     compare_golden_reference_node,
@@ -58,16 +65,22 @@ from backend.agents.step.state import (
     ImageToStepState,
 )
 from backend.core.memory import get_memory_saver
+from backend.agents.step.semantic_review_nodes import (
+    prepare_semantic_review_node,
+    review_semantics_node,
+    route_after_semantic_review,
+)
 
 
-def build_drawing_to_step_graph():
+def build_drawing_to_step_graph(checkpointer=None):
     """构建二维工程图 → Feature IR → STEP 的 Golden Set 工作流。
 
     尺寸、特征或证据不足时，工作流在 ``stop_insufficient_extraction`` 安全结束，
     不创建占位模型；通过门禁后才允许执行白名单 Feature IR。
 
     Returns:
-        已绑定独立 Checkpointer 的二维图纸工作流。
+        已绑定 Checkpointer 的二维图纸工作流。未传入时使用进程内 MemorySaver
+        （供本地开发和测试）；生产调用应注入 PostgreSQL checkpointer。
     """
     builder = StateGraph(DrawingToStepState)
     builder.add_node("extract_drawing", extract_drawing_node)
@@ -120,19 +133,30 @@ def build_drawing_to_step_graph():
     builder.add_edge("stop_insufficient_extraction", END)
     builder.add_edge("finalize_drawing_result", END)
     builder.add_edge("failed", END)
-    return builder.compile(checkpointer=get_memory_saver("step_drawing"))
+    return builder.compile(
+        checkpointer=(
+            checkpointer
+            if checkpointer is not None
+            else get_memory_saver("step_drawing")
+        )
+    )
 
 
-def build_image_to_step_graph():
+def build_image_to_step_graph(checkpointer=None):
     """构建严格证据链的单张工程图图片到 STEP 工作流。
 
-    对外只要求 ``image_path``。Golden Reference 节点严格位于候选 STEP
+    对外只要求 ``image_path``，开始时通过 interrupt 询问封装。
+    Golden Reference 节点严格位于候选 STEP
     回读和四视图渲染之后，且没有回边，不能污染 OCR、语义或 Feature IR。
 
     Returns:
-        已绑定独立 Checkpointer 的图片工作流。
+        已绑定 Checkpointer 的图片工作流。未传入时使用进程内 MemorySaver
+        （供本地开发和测试）；生产调用应注入 PostgreSQL checkpointer。
     """
     builder = StateGraph(ImageToStepState)
+    builder.add_node("ask_package", ask_package_node)
+    builder.add_node("confirm_template", confirm_template_node)
+    builder.add_node("review_result", review_result_node)
     builder.add_node("load_image", load_image_node)
     builder.add_node("preprocess_image", preprocess_image_node)
     builder.add_node("extract_all_evidence", extract_all_evidence_node)
@@ -145,6 +169,8 @@ def build_image_to_step_graph():
     builder.add_node("save_view_result", save_view_result_node)
     builder.add_node("merge_view_results", merge_view_results_node)
     builder.add_node("fuse_evidence", fuse_evidence_node)
+    builder.add_node("review_semantics", review_semantics_node)
+    builder.add_node("prepare_semantic_review", prepare_semantic_review_node)
     builder.add_node("validate_dimension_chain", validate_dimension_chain_node)
     builder.add_node("validate_dimensions", validate_dimensions_node)
     builder.add_node("classify_family", image_classify_family_node)
@@ -172,13 +198,21 @@ def build_image_to_step_graph():
     )
     builder.add_node("failed", image_failed_node)
 
-    builder.add_edge(START, "load_image")
+    builder.add_edge(START, "ask_package")
+    builder.add_conditional_edges(
+        "ask_package", route_after_human_input,
+        {"continue": "load_image", "cancelled": END},
+    )
+    builder.add_conditional_edges(
+        "confirm_template", route_after_human_input,
+        {"continue": "jev_route_template", "cancelled": END},
+    )
     ordered_nodes = (
         ("load_image", "preprocess_image"),
         ("preprocess_image", "extract_all_evidence"),
         ("extract_all_evidence", "store_evidence_locally"),
         ("store_evidence_locally", "detect_views"),
-        ("detect_views", "jev_route_template"),
+        ("detect_views", "confirm_template"),
         ("build_dimension_groups", "retrieve_view_evidence"),
         ("retrieve_view_evidence", "qwen_analyze_one_view"),
         ("qwen_analyze_one_view", "save_view_result"),
@@ -240,7 +274,13 @@ def build_image_to_step_graph():
             "stop": "stopped_insufficient_extraction",
             "follow_up": "needs_human_follow_up",
             "unsupported": "stopped_unsupported_template",
+            "review": "prepare_semantic_review",
         },
+    )
+    builder.add_edge("prepare_semantic_review", "review_semantics")
+    builder.add_conditional_edges(
+        "review_semantics", route_after_semantic_review,
+        {"next": "review_semantics", "merge": "merge_view_results"},
     )
     post_gate_nodes = (
         ("classify_family", "create_feature_ir"),
@@ -277,16 +317,24 @@ def build_image_to_step_graph():
     builder.add_edge("stopped_insufficient_extraction", END)
     builder.add_edge("needs_human_follow_up", END)
     builder.add_edge("stopped_unsupported_template", END)
-    builder.add_edge("finalize_result", END)
+    builder.add_conditional_edges(
+        "finalize_result", route_continue_or_failed,
+        {"continue": "review_result", "failed": "failed"},
+    )
+    builder.add_edge("review_result", END)
     builder.add_edge("failed", END)
 
-    # ── 编译（绑定 MemorySaver 实现多轮记忆）────────────────
-    checkpointer = get_memory_saver("step_image")
-    return builder.compile(checkpointer=checkpointer)
+    return builder.compile(
+        checkpointer=(
+            checkpointer
+            if checkpointer is not None
+            else get_memory_saver("step_image")
+        )
+    )
 
 
 
-def select_graph_mode(mode: str):
+def select_graph_mode(mode: str, checkpointer=None):
     """按输入模式返回 STEP Agent 工作流。
 
     Args:
@@ -297,9 +345,9 @@ def select_graph_mode(mode: str):
         对应模式的 LangGraph 可执行对象。
     """
     if mode == "drawing":
-        return build_drawing_to_step_graph()
+        return build_drawing_to_step_graph(checkpointer=checkpointer)
     if mode == "image":
-        return build_image_to_step_graph()
+        return build_image_to_step_graph(checkpointer=checkpointer)
     raise ValueError(f"不支持的 STEP Agent 模式：{mode}")
 
 

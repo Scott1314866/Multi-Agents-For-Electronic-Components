@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import re
 
 from backend.agents.step.vision.ocr import (
     parse_dimension_expression,
@@ -13,9 +14,169 @@ from backend.agents.step.vision.schemas import (
     DimensionGateResult,
     FusedEvidence,
     FusedParameter,
+    GeometryLine,
+    OCRToken,
     QwenSemanticResult,
+    SemanticAssignment,
     VisualEvidenceBundle,
 )
+
+
+def _stacked_range_separator(
+    upper: OCRToken, lower: OCRToken, lines: list[GeometryLine]
+) -> GeometryLine | None:
+    """辨认有分隔横线的两行上下限；相邻数值本身不是范围证据。"""
+    if (
+        upper.source_region_id != lower.source_region_id
+        or upper.source_region_id == "unassigned"
+        or upper.unit_context != lower.unit_context
+        or upper.unit_context != "mm"
+        or upper.value_role.startswith("table_")
+        or lower.value_role.startswith("table_")
+        or not all(re.fullmatch(r"\d+(?:[.,]\d+)?", token.text.strip()) for token in (upper, lower))
+    ):
+        return None
+    first = parse_dimension_expression(upper.text).nominal_value
+    second = parse_dimension_expression(lower.text).nominal_value
+    if first is None or second is None or first <= second:
+        return None
+    a, b = upper.bbox, lower.bbox
+    width = min(a[2] - a[0], b[2] - b[0])
+    height = max(a[3] - a[1], b[3] - b[1])
+    if width <= 0 or height <= 0:
+        return None
+    gap = b[1] - a[3]
+    if (
+        not 0 <= gap <= height * 0.65
+        or abs((a[0] + a[2]) - (b[0] + b[2])) / 2 > width * 0.20
+        or min(a[2], b[2]) - max(a[0], b[0]) < width * 0.80
+    ):
+        return None
+    for line in lines:
+        x1, y1 = line.start
+        x2, y2 = line.end
+        if (
+            line.source_region_id == upper.source_region_id
+            and abs(y2 - y1) <= height * 0.10
+            and a[3] <= (y1 + y2) / 2 <= b[1]
+            and min(max(x1, x2), a[2], b[2]) - max(min(x1, x2), a[0], b[0]) >= width * 0.60
+            and min(x1, x2) >= min(a[0], b[0]) - width * 0.20
+            and max(x1, x2) <= max(a[2], b[2]) + width * 0.20
+        ):
+            return line
+    return None
+
+
+def _reconcile_split_stacked_ranges(
+    evidence: VisualEvidenceBundle, semantics: QwenSemanticResult
+) -> QwenSemanticResult:
+    """修复被拆开的同一印刷范围，不以置信度压掉独立尺寸矛盾。
+
+    跨字段归并还要求：下限没有自己的独立外部尺寸线/标签，且该字段在
+    另一视图有完整范围作旁证。没有分隔线、单位/视图不同或存在独立
+    尺寸线时保留原 assignment，交由既有冲突门禁处理。
+    """
+    tokens = {item.token_id: item for item in evidence.ocr_tokens}
+    lines = {item.line_id: item for item in evidence.lines}
+    assignments = list(semantics.assignments)
+    consumed: set[int] = set()
+    changes: list[str] = []
+
+    def outside_lines(item: SemanticAssignment, token: OCRToken) -> set[str]:
+        x0, y0, x1, y1 = token.bbox
+        margin = max(1.0, (y1 - y0) * 0.10)
+        return {
+            line_id for line_id in item.line_ids
+            if line_id in lines and lines[line_id].type == "dimension_line"
+            and any(
+                not (x0 - margin <= x <= x1 + margin and y0 - margin <= y <= y1 + margin)
+                for x, y in (lines[line_id].start, lines[line_id].end)
+            )
+        }
+
+    def has_independent_label(token: OCRToken) -> bool:
+        """附近 A1/A2 等独立尺寸标签阻止把两行当作同一范围。"""
+        x0, y0, x1, y1 = token.bbox
+        height = max(1, y1 - y0)
+        for label in evidence.ocr_tokens:
+            if label.source_region_id != token.source_region_id:
+                continue
+            text = label.text.strip()
+            if not re.search(r"[A-Za-zΑ-ω]", text) or text.casefold() in {"min", "max", "nom", "typ", "mm"}:
+                continue
+            a, b, c, d = label.bbox
+            overlap = min(y1, d) - max(y0, b)
+            horizontal_gap = max(x0 - c, a - x1, 0)
+            if overlap >= min(height, max(1, d - b)) * 0.50 and horizontal_gap <= height:
+                return True
+        return False
+
+    for upper_index, upper_assignment in enumerate(assignments):
+        if upper_index in consumed or len(upper_assignment.token_ids) != 1:
+            continue
+        upper = tokens.get(upper_assignment.token_ids[0])
+        if upper is None or upper_assignment.canonical_name.endswith(("_deg", "_count")):
+            continue
+        candidates = []
+        for lower_index, lower_assignment in enumerate(assignments):
+            if lower_index == upper_index or lower_index in consumed or len(lower_assignment.token_ids) != 1:
+                continue
+            lower = tokens.get(lower_assignment.token_ids[0])
+            if lower is None or lower_assignment.canonical_name.endswith(("_deg", "_count")):
+                continue
+            separator = _stacked_range_separator(upper, lower, evidence.lines)
+            if separator is not None:
+                candidates.append((lower_index, lower_assignment, lower, separator))
+        if len(candidates) != 1:
+            continue
+        lower_index, lower_assignment, lower, separator = candidates[0]
+        if has_independent_label(upper) or has_independent_label(lower):
+            continue
+        # 有两个不同的真实尺寸标注，不能仅凭文字对齐将其合并。
+        upper_external = outside_lines(upper_assignment, upper) - {separator.line_id}
+        lower_external = outside_lines(lower_assignment, lower) - {separator.line_id}
+        if upper_external and lower_external and upper_external != lower_external:
+            continue
+        support_ids: list[str] = []
+        if upper_assignment.canonical_name != lower_assignment.canonical_name:
+            if lower_external - upper_external:
+                continue
+            for support in assignments:
+                if support.canonical_name != lower_assignment.canonical_name or len(support.token_ids) != 2:
+                    continue
+                pair = [tokens[token_id] for token_id in support.token_ids if token_id in tokens]
+                if len(pair) != 2 or any(item.source_region_id == lower.source_region_id for item in pair):
+                    continue
+                first, second = sorted(pair, key=lambda item: item.bbox[1])
+                if _stacked_range_separator(first, second, evidence.lines) is None:
+                    continue
+                lower_bound = parse_dimension_expression(second.text).nominal_value
+                upper_bound = parse_dimension_expression(first.text).nominal_value
+                split_value = parse_dimension_expression(lower.text).nominal_value
+                anchor_value = parse_dimension_expression(upper.text).nominal_value
+                if lower_bound <= split_value <= upper_bound < anchor_value:
+                    support_ids = list(support.token_ids)
+                    break
+            if not support_ids:
+                continue
+        assignments[upper_index] = upper_assignment.model_copy(update={
+            "token_ids": [*upper_assignment.token_ids, *lower_assignment.token_ids],
+            "line_ids": list(dict.fromkeys([
+                *upper_assignment.line_ids, *lower_assignment.line_ids, separator.line_id,
+            ])),
+            "confidence": min(upper_assignment.confidence, lower_assignment.confidence),
+            "target_feature": f"{upper_assignment.target_feature};stacked_range",
+        })
+        consumed.add(lower_index)
+        changes.append(
+            f"stacked_range_reconciled:{upper.token_id}+{lower.token_id}"
+            f"->{upper_assignment.canonical_name};separator={separator.line_id};"
+            f"split_field={lower_assignment.canonical_name};corroboration={support_ids}"
+        )
+    return semantics.model_copy(update={
+        "assignments": [item for index, item in enumerate(assignments) if index not in consumed],
+        "ambiguities": [*semantics.ambiguities, *changes],
+    })
 
 
 def fuse_evidence(
@@ -23,6 +184,7 @@ def fuse_evidence(
     semantics: QwenSemanticResult,
 ) -> FusedEvidence:
     """只根据 Qwen 引用的现有证据生成参数，Qwen 不参与数值填写。"""
+    semantics = _reconcile_split_stacked_ranges(evidence, semantics)
     tokens = {token.token_id: token for token in evidence.ocr_tokens}
     lines = {line.line_id: line for line in evidence.lines}
     missing_evidence: list[str] = []

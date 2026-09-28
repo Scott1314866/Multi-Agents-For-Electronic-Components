@@ -18,7 +18,7 @@ def _horizontal_band_regions(binary: np.ndarray) -> list[tuple[int, int, int, in
     """
     height, width = binary.shape
     foreground = binary < 128
-    margin_x = max(2, int(round(width * 0.02)))
+    margin_x = max(2, int(round(width * 0.02)))     # 计算两边水平边距：约为图像宽度的 2%，但最小不低于 2 像素
     inner = foreground[:, margin_x : max(margin_x + 1, width - margin_x)]
     active = inner.sum(axis=1) > max(8, int(round(width * 0.01)))
 

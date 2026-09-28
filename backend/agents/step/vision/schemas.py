@@ -45,7 +45,11 @@ class GeometryLine(BaseModel):
 
     line_id: str
     type: Literal[
-        "dimension_line", "extension_line", "center_line", "outline", "line_segment"
+        "dimension_line",
+        "extension_line",
+        "center_line",
+        "outline",
+        "line_segment"
     ]
     start: tuple[int, int]
     end: tuple[int, int]

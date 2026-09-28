@@ -88,6 +88,7 @@ from backend.agents.step.vision import (
     validate_fused_dimensions,
 )
 from backend.agents.step.vision.line_detector import link_tokens_to_lines
+from backend.agents.step.vision.semantic_review import find_semantic_collisions
 from backend.agents.step.vision.schemas import (
     ArrowEvidence,
     GeometryLine,
@@ -98,6 +99,7 @@ from backend.agents.step.vision.schemas import (
 from backend.core.llm_factory import get_llm
 from backend.core.logger import get_logger
 from backend.config import get_settings
+from backend.agents.step.workers import cad_node, vision_node
 
 
 logger = get_logger(__name__)
@@ -215,7 +217,8 @@ def _default_output_dir(image_path: Path) -> Path:
     return PROJECT_ROOT / "output" / "drawing_to_step" / "image_agent" / safe_file_stem(image_path.stem)
 
 
-async def load_image_node(state: dict[str, Any]) -> dict[str, Any]:
+@vision_node
+def load_image_node(state: dict[str, Any]) -> dict[str, Any]:
     """作用：校验唯一图片输入并记录哈希，不读取 Golden Reference。
 
     Args:
@@ -248,7 +251,8 @@ async def load_image_node(state: dict[str, Any]) -> dict[str, Any]:
         return {"errors": _errors(state, str(exc)), "status": "failed"}
 
 
-async def preprocess_image_node(state: dict[str, Any]) -> dict[str, Any]:
+@vision_node
+def preprocess_image_node(state: dict[str, Any]) -> dict[str, Any]:
     """作用：执行灰度化、两倍放大、纠偏、二值化和连通区域清理。
 
     Args:
@@ -268,7 +272,8 @@ async def preprocess_image_node(state: dict[str, Any]) -> dict[str, Any]:
         return {"errors": _errors(state, str(exc)), "status": "failed"}
 
 
-async def extract_all_evidence_node(state: dict[str, Any]) -> dict[str, Any]:
+@vision_node
+def extract_all_evidence_node(state: dict[str, Any]) -> dict[str, Any]:
     """作用：提取不带视图语义的全量 OCR、原始线段和箭头证据。
 
     Args:
@@ -457,6 +462,12 @@ async def detect_views_node(state: dict[str, Any]) -> dict[str, Any]:
                 build_region_summaries(evidence), ensure_ascii=False
             ),
         )
+        if state.get("package_type_hint"):
+            prompt += (
+                "\n人工提供的封装身份提示（仅用于身份判断，不作为尺寸证据；"
+                "与图纸冲突时请在 ambiguities 中说明）：\n"
+                + json.dumps(state["package_type_hint"], ensure_ascii=False)
+            )
         classification = _parse_model_json(
             await _invoke_qwen(
                 IMAGE_VIEW_CLASSIFICATION_SYSTEM_PROMPT,
@@ -476,8 +487,13 @@ async def detect_views_node(state: dict[str, Any]) -> dict[str, Any]:
         }
         table_region_ids = detect_dimension_table_regions(tokens, regions)
         for region_id in table_region_ids:
+            if _is_excluded_geometry_view(identified.get(region_id, "")):
+                continue
             identified[region_id] = "dimension_table"
-        if any(region.region_id == "region_document" for region in regions):
+        if (
+            any(region.region_id == "region_document" for region in regions)
+            and not identified.get("region_document")
+        ):
             document_numeric_count = sum(
                 1
                 for token in tokens
@@ -502,6 +518,10 @@ async def detect_views_node(state: dict[str, Any]) -> dict[str, Any]:
             # 任何尺寸语义，也不产生数值。后续仍须由逐视图 Qwen 和门禁确认。
             recovered: list[str] = []
             for region in regions:
+                # Never promote an explicitly excluded footprint/electrical
+                # region merely because it contains many numbers and lines.
+                if _is_excluded_geometry_view(identified.get(region.region_id, "")):
+                    continue
                 numeric_count = sum(
                     1
                     for token in tokens
@@ -624,7 +644,24 @@ async def jev_route_template_node(state: dict[str, Any]) -> dict[str, Any]:
         "route_source": "qwen_fallback",
     }
     try:
-        if not api_key:
+        if state.get("human_route"):
+            # 人工已在前置节点确认分类，Jev 不得覆盖该选择。
+            report.update({
+                "status": "human_confirmed",
+                "route_source": "human_confirmation",
+                "reason": "human_selection_preserved",
+                "human_selection": state["human_route"],
+            })
+        elif state.get("package_type_hint") and state.get("status") == "routing_ready":
+            # 前置节点已检查人工封装与高置信分类一致；无需重复询问，
+            # 也不能由后续外部路由重新改变这一封装身份。
+            report.update({
+                "status": "package_constrained",
+                "route_source": "requested_package",
+                "reason": "recognized_package_matches_human_request",
+                "requested_package": state["package_type_hint"],
+            })
+        elif not api_key:
             report["reason"] = "typesafe_api_key_not_configured"
         else:
             decision = await call_jev_choice(
@@ -698,7 +735,8 @@ async def jev_route_template_node(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def build_dimension_groups_node(state: dict[str, Any]) -> dict[str, Any]:
+@vision_node
+def build_dimension_groups_node(state: dict[str, Any]) -> dict[str, Any]:
     """作用：将当前全量 token、线段和箭头确定性归并为尺寸组。
 
     Args:
@@ -1353,7 +1391,8 @@ async def merge_view_results_node(state: dict[str, Any]) -> dict[str, Any]:
         return {"errors": _errors(state, str(exc)), "status": "failed"}
 
 
-async def extract_visual_evidence_node(state: dict[str, Any]) -> dict[str, Any]:
+@vision_node
+def extract_visual_evidence_node(state: dict[str, Any]) -> dict[str, Any]:
     """作用：运行视图切分、PaddleOCR、Canny/Hough 和证据邻接分析。
 
     Args:
@@ -1411,20 +1450,27 @@ async def extract_visual_evidence_node(state: dict[str, Any]) -> dict[str, Any]:
         return {"errors": _errors(state, str(exc)), "status": "failed"}
 
 
+def _is_excluded_geometry_view(view_type: str) -> bool:
+    normalized = view_type.casefold().replace("-", "_").replace(" ", "_")
+    return any(item in normalized for item in (
+        "title", "revision", "note", "electrical", "ordering", "footprint",
+        "land_pattern", "pcb", "layout", "电气", "焊盘", "推荐布局",
+    ))
+
+
 def _is_geometry_view(view_type: str) -> bool:
     """判断第一阶段标签是否属于需要提取尺寸的几何视图。"""
     normalized = view_type.casefold().replace("-", "_").replace(" ", "_")
+    if _is_excluded_geometry_view(view_type):
+        return False
     if "dimension_table" in normalized:
         return True
-    excluded = ("title", "revision", "note", "electrical", "ordering")
     included = (
-        "front", "side", "top", "bottom", "rear", "back", "pcb", "layout",
+        "front", "side", "top", "bottom", "rear", "back",
         "isometric", "detail", "composite", "outline", "package",
         "主视", "侧视", "俯视", "后视", "底视", "综合", "外形",
     )
-    return not any(item in normalized for item in excluded) and any(
-        item in normalized for item in included
-    )
+    return any(item in normalized for item in included)
 
 
 async def _invoke_qwen(
@@ -1471,12 +1517,17 @@ def _view_family_contract(family_contract: dict[str, Any], view_type: str) -> di
                 for key, fields in family_view_groups.items()
                 if key.casefold() in normalized
             ),
-            set(family_contract.get("required_parameters", [])),
+            set(family_contract.get("required_parameters", []))
+            | set(family_contract.get("optional_parameters", [])),
         )
         return {
             "required_parameters": [
                 name
                 for name in family_contract.get("required_parameters", [])
+                if name in selected
+            ],
+            "optional_parameters": [
+                name for name in family_contract.get("optional_parameters", [])
                 if name in selected
             ],
             "required_features": family_contract.get("required_features", []),
@@ -1492,9 +1543,9 @@ def _view_family_contract(family_contract: dict[str, Any], view_type: str) -> di
         "top": {
             "nominal_pin_count", "terminal_pitch", "pin_span",
             "overall_length", "overall_width", "body_length", "body_width",
-            "terminal_span", "terminal_length", "terminal_width",
+            "terminal_span", "terminal_length", "lead_projection", "terminal_width",
             "terminal_thickness", "mold_draft_angle_top_deg",
-            "mold_draft_angle_bottom_deg",
+            "mold_draft_angle_bottom_deg", "lead_angle_deg",
         },
         "front": {
             "circuit_count", "overall_width", "front_plate_height",
@@ -1507,7 +1558,8 @@ def _view_family_contract(family_contract: dict[str, Any], view_type: str) -> di
             "plate_thickness", "front_projection_depth", "shell_wall_thickness",
             "rear_body_depth", "rear_housing_height", "signal_pin_width",
             "pin_tail_length", "overall_height", "total_height", "housing_height",
-            "body_standoff",
+            "body_standoff", "terminal_length", "terminal_thickness", "lead_projection",
+            "lead_angle_deg",
             "mold_draft_angle_top_deg", "mold_draft_angle_bottom_deg",
         },
         "pcb": {
@@ -1518,7 +1570,8 @@ def _view_family_contract(family_contract: dict[str, Any], view_type: str) -> di
     }
     selected = next(
         (fields for key, fields in fields_by_view.items() if key in normalized),
-        set(family_contract.get("required_parameters", [])),
+        set(family_contract.get("required_parameters", []))
+        | set(family_contract.get("optional_parameters", [])),
     )
     available = set(family_contract.get("required_parameters", []))
     if available and not (available & set().union(*fields_by_view.values())):
@@ -1526,6 +1579,9 @@ def _view_family_contract(family_contract: dict[str, Any], view_type: str) -> di
     return {
         "required_parameters": [
             name for name in family_contract.get("required_parameters", []) if name in selected
+        ],
+        "optional_parameters": [
+            name for name in family_contract.get("optional_parameters", []) if name in selected
         ],
         "required_features": family_contract.get("required_features", []),
         "parameter_guidance": {
@@ -1700,16 +1756,23 @@ async def fuse_evidence_node(state: dict[str, Any]) -> dict[str, Any]:
         Schema 或融合执行异常时返回 ``failed``。
     """
     try:
-        fused = derive_family_parameters(fuse_evidence(
-            VisualEvidenceBundle.model_validate(state["visual_evidence"]),
-            QwenSemanticResult.model_validate(state["semantic_result"]),
-        ))
+        evidence = VisualEvidenceBundle.model_validate(state["visual_evidence"])
+        semantics = QwenSemanticResult.model_validate(state["semantic_result"])
+        collisions = find_semantic_collisions(evidence, semantics)
+        fused = fuse_evidence(evidence, semantics)
+        if collisions:
+            fused = fused.model_copy(update={"conflicting_fields": sorted({
+                *fused.conflicting_fields,
+                *(name for item in collisions for name in item["names"]),
+            })})
+        fused = derive_family_parameters(fused)
         payload = fused.model_dump()
         path = Path(state["output_dir"]) / "fused_evidence.json"
         artifacts = dict(state.get("artifact_paths", {}))
         artifacts["fused_evidence"] = _write_json(path, payload)
         return {
             "fused_evidence": payload,
+            "semantic_collisions": collisions,
             "artifact_paths": artifacts,
             "status": "evidence_fused",
         }
@@ -1776,10 +1839,10 @@ async def validate_dimension_chain_node(state: dict[str, Any]) -> dict[str, Any]
             "nominal_pin_count", "terminal_pitch", "terminal_span",
             "total_height", "housing_height", "body_standoff",
             "overall_length", "overall_width", "body_length", "body_width",
-            "terminal_length",
+            "terminal_length", "lead_projection",
         }
         if fused.family_id == "ic/quad_gullwing_ic" and quad_required.issubset(values):
-            checked_relationships += 5
+            checked_relationships += 6
             count = int(round(values["nominal_pin_count"]))
             if count < 4 or count % 4:
                 conflicts.append("nominal_pin_count:not_divisible_by_4")
@@ -1791,12 +1854,14 @@ async def validate_dimension_chain_node(state: dict[str, Any]) -> dict[str, Any]
                 conflicts.append("body_length>=overall_length")
             if values["body_width"] >= values["overall_width"]:
                 conflicts.append("body_width>=overall_width")
-            expected_length = min(
+            projections = (
                 (values["overall_length"] - values["body_length"]) / 2.0,
                 (values["overall_width"] - values["body_width"]) / 2.0,
             )
-            if abs(expected_length - values["terminal_length"]) > 0.05:
-                conflicts.append("terminal_length!=half_overall_body_difference")
+            if any(abs(value - values["lead_projection"]) > 0.05 for value in projections):
+                conflicts.append("lead_projection!=half_overall_body_difference")
+            if not 0.0 < values["terminal_length"] <= values["lead_projection"]:
+                conflicts.append("terminal_length:outside_lead_projection")
             if values["housing_height"] + values["body_standoff"] > values["total_height"] + 0.05:
                 conflicts.append("housing_height+body_standoff>total_height")
         qfn_required = {
@@ -1955,6 +2020,7 @@ async def create_feature_ir_node(state: dict[str, Any]) -> dict[str, Any]:
         return {
             "feature_ir": feature_ir,
             "artifact_paths": artifacts,
+            "needs_review": bool(state.get("needs_review") or feature_ir.get("assumptions")),
             "status": "feature_ir_created",
         }
     except Exception as exc:
@@ -2100,7 +2166,8 @@ async def search_reference_step_node(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def prepare_exact_reference_step_node(state: dict[str, Any]) -> dict[str, Any]:
+@cad_node
+def prepare_exact_reference_step_node(state: dict[str, Any]) -> dict[str, Any]:
     """作用：回读验证精确产品 STEP，成功后直接形成候选产物。
 
     Args:
@@ -2185,7 +2252,8 @@ async def prepare_exact_reference_step_node(state: dict[str, Any]) -> dict[str, 
         }
 
 
-async def validate_reference_step_candidates_node(
+@cad_node
+def validate_reference_step_candidates_node(
     state: dict[str, Any],
 ) -> dict[str, Any]:
     """作用：Feature IR 完成后验证早期检索到的相似 STEP 是否兼容。
@@ -2253,7 +2321,8 @@ async def validate_reference_step_candidates_node(
     }
 
 
-async def prepare_reference_step_node(state: dict[str, Any]) -> dict[str, Any]:
+@cad_node
+def prepare_reference_step_node(state: dict[str, Any]) -> dict[str, Any]:
     """作用：复制相同产品 STEP，或按 Feature IR 尺寸适配相似封装 STEP。
 
     Args:
@@ -2320,7 +2389,8 @@ async def prepare_reference_step_node(state: dict[str, Any]) -> dict[str, Any]:
         }
 
 
-async def build_step_node(state: dict[str, Any]) -> dict[str, Any]:
+@cad_node
+def build_step_node(state: dict[str, Any]) -> dict[str, Any]:
     """作用：让参数化 Builder 只消费 Feature IR，并导出候选 STEP。
 
     Args:
@@ -2352,7 +2422,8 @@ async def build_step_node(state: dict[str, Any]) -> dict[str, Any]:
         return {"errors": _errors(state, str(exc)), "status": "failed"}
 
 
-async def verify_step_node(state: dict[str, Any]) -> dict[str, Any]:
+@cad_node
+def verify_step_node(state: dict[str, Any]) -> dict[str, Any]:
     """作用：用 OpenCascade 回读候选 STEP，并核对自有 IR 预期。
 
     Args:
@@ -2416,7 +2487,8 @@ async def verify_step_node(state: dict[str, Any]) -> dict[str, Any]:
         return {"errors": _errors(state, str(exc)), "status": "failed"}
 
 
-async def render_views_node(state: dict[str, Any]) -> dict[str, Any]:
+@cad_node
+def render_views_node(state: dict[str, Any]) -> dict[str, Any]:
     """作用：从已回读候选 STEP 渲染等轴、前、俯、右四视图。
 
     Args:
@@ -2457,7 +2529,8 @@ def _metric_sizes(metrics: dict[str, Any]) -> dict[str, float]:
     }
 
 
-async def compare_golden_reference_node(state: dict[str, Any]) -> dict[str, Any]:
+@cad_node
+def compare_golden_reference_node(state: dict[str, Any]) -> dict[str, Any]:
     """作用：候选 STEP 和四视图完成后，独立读取原厂 STEP 做只读比较。
 
     Args:
@@ -2519,6 +2592,8 @@ async def compare_golden_reference_node(state: dict[str, Any]) -> dict[str, Any]
             for feature in state.get("feature_ir", {}).get("features", [])
         }
         expected_types = GOLDEN_EXPECTED_FEATURE_TYPES.get(family_id, set())
+        if family_id == "ic/gullwing_ic" and "molded_body_box" in feature_types:
+            expected_types = (expected_types - {"drafted_body_loft"}) | {"molded_body_box"}
         missing_structures = (
             []
             if state.get("model_source") == "web_exact"
@@ -2637,6 +2712,8 @@ async def finalize_result_node(state: dict[str, Any]) -> dict[str, Any]:
             "previews": state.get("preview_paths", {}),
             "verification": state.get("verification", {}),
             "golden_comparison": state.get("golden_comparison", {}),
+            "needs_review": bool(state.get("needs_review")),
+            "modeling_assumptions": state.get("feature_ir", {}).get("assumptions", []),
         }
         _write_json(Path(state["output_dir"]) / "result.json", result)
         return {"result": result, "status": result["status"]}
@@ -2687,6 +2764,9 @@ def route_after_dimension_gate(state: dict[str, Any]) -> str:
         return "follow_up"
     if gate.get("status") == "stopped_unsupported_template":
         return "unsupported"
+    from backend.agents.step.semantic_review_nodes import semantic_review_regions
+    if semantic_review_regions(state):
+        return "review"
     return "stop"
 
 

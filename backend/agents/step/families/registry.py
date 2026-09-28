@@ -69,6 +69,7 @@ def image_family_catalog() -> dict[str, dict[str, Any]]:
         },
         gullwing_ic.FAMILY_ID: {
             "required_parameters": list(gullwing_ic.REQUIRED_PARAMETERS),
+            "optional_parameters": list(gullwing_ic.OPTIONAL_PARAMETERS),
             "required_features": list(gullwing_ic.REQUIRED_FEATURES),
             "parameter_guidance": getattr(gullwing_ic, "PARAMETER_GUIDANCE", {}),
             "view_parameter_groups": getattr(
@@ -131,6 +132,28 @@ def reconcile_image_family_classification(
         if float(token_field(token, "confidence", 0.0)) >= 0.80
     ]
     joined_text = " \n ".join(reliable_texts)
+
+    def signature_ambiguities(family_id: str, package_pattern: Any, reason: str) -> list[str]:
+        """Successful identity confirmation is not a new ambiguity.
+
+        Keep model-reported uncertainty and require confirmation when OCR
+        actually changes the declared family or contradicts its package name.
+        """
+        existing = list(getattr(classification, "ambiguities", []))
+        declared = resolve_family_selection(
+            str(getattr(classification, "family_id", "")),
+            category_id=str(getattr(classification, "category_id", "")),
+            subcategory_id=getattr(classification, "subcategory_id", None),
+        )
+        package_type = str(getattr(classification, "package_type", ""))
+        if (
+            declared["status"] == "resolved"
+            and declared["family_id"] == family_id
+            and (not package_type or package_pattern.search(package_type))
+        ):
+            return existing
+        return list(dict.fromkeys([*existing, reason]))
+
     if _has_qfn_ufqfpn_signature(reliable_texts):
         contract = image_family_catalog()[qfn_ufqfpn.FAMILY_ID]
         return classification.model_copy(update={
@@ -144,10 +167,10 @@ def reconcile_image_family_classification(
             ),
             "identified_features": list(contract["required_features"]),
             "unresolved_fields": list(contract["required_parameters"]),
-            "ambiguities": [
-                *getattr(classification, "ambiguities", []),
-                "确定性 Family 校验：封装名或 D2/E2 尺寸符号明确为四边无引脚拓扑。",
-            ],
+            "ambiguities": signature_ambiguities(
+                qfn_ufqfpn.FAMILY_ID, _QFN_UFQFPN_PACKAGE_RE,
+                "OCR 无引脚封装证据与原始身份分类不一致，需确认 QFN/UFQFPN 模板。",
+            ),
             "overall_confidence": min(
                 float(getattr(classification, "overall_confidence", 0.0)), 0.95
             ),
@@ -160,10 +183,10 @@ def reconcile_image_family_classification(
             "family_id": quad_gullwing_ic.FAMILY_ID,
             "identified_features": list(contract["required_features"]),
             "unresolved_fields": list(contract["required_parameters"]),
-            "ambiguities": [
-                *getattr(classification, "ambiguities", []),
-                "确定性 Family 校验：OCR 标题明确为四边 QFP/LQFP 封装。",
-            ],
+            "ambiguities": signature_ambiguities(
+                quad_gullwing_ic.FAMILY_ID, _QUAD_GULLWING_PACKAGE_RE,
+                "OCR QFP/LQFP 标题与原始身份分类不一致，需确认四边鸥翼模板。",
+            ),
             "overall_confidence": min(
                 float(getattr(classification, "overall_confidence", 0.0)), 0.95
             ),
@@ -348,21 +371,18 @@ def derive_family_parameters(fused: FusedEvidence) -> FusedEvidence:
         derived_names.add(name)
 
     if fused.family_id == gullwing_ic.FAMILY_ID:
-        if {"nominal_pin_count", "terminal_pitch"}.issubset(indexed):
-            count = int(round(indexed["nominal_pin_count"].value))
-            expected_span = max(0, count // 2 - 1) * indexed["terminal_pitch"].value
-            current_span = indexed.get("pin_span")
-            if current_span is not None:
-                parameters = [
-                    item for item in parameters if item.canonical_name != "pin_span"
-                ]
-                indexed.pop("pin_span", None)
-            add(
-                "pin_span",
-                expected_span,
-                [indexed["nominal_pin_count"], indexed["terminal_pitch"]],
-                "(nominal_pin_count/2-1)*terminal_pitch",
-            )
+        if "pin_span" not in indexed and {"nominal_pin_count", "terminal_pitch"}.issubset(indexed):
+            count_value = indexed["nominal_pin_count"].value
+            count = int(round(count_value))
+            # 只有可由双侧对称多脚布局推出的跨度才允许派生。
+            # 显式跨度保留给尺寸链门禁检查，不能用推导值覆盖冲突证据。
+            if count >= 4 and count % 2 == 0 and abs(count_value - count) <= 1e-9:
+                add(
+                    "pin_span",
+                    (count // 2 - 1) * indexed["terminal_pitch"].value,
+                    [indexed["nominal_pin_count"], indexed["terminal_pitch"]],
+                    "(nominal_pin_count/2-1)*terminal_pitch",
+                )
         if {"total_height", "body_standoff"}.issubset(indexed):
             add(
                 "housing_height",
@@ -370,32 +390,9 @@ def derive_family_parameters(fused: FusedEvidence) -> FusedEvidence:
                 [indexed["total_height"], indexed["body_standoff"]],
                 "total_height-body_standoff",
             )
-        top = indexed.get("mold_draft_angle_top_deg")
-        bottom = indexed.get("mold_draft_angle_bottom_deg")
-        if top is not None and bottom is None:
-            copied = top.model_copy(update={
-                "canonical_name": "mold_draft_angle_bottom_deg",
-                "target_feature": "derived_chain:same_visible_mold_draft_range",
-            })
-            parameters.append(copied)
-            indexed[copied.canonical_name] = copied
-            derived_names.add(copied.canonical_name)
-        elif bottom is not None and top is None:
-            copied = bottom.model_copy(update={
-                "canonical_name": "mold_draft_angle_top_deg",
-                "target_feature": "derived_chain:same_visible_mold_draft_range",
-            })
-            parameters.append(copied)
-            indexed[copied.canonical_name] = copied
-            derived_names.add(copied.canonical_name)
-
     if fused.family_id == quad_gullwing_ic.FAMILY_ID:
         if {"total_height", "body_standoff"}.issubset(indexed):
             sources = [indexed["total_height"], indexed["body_standoff"]]
-            parameters = [
-                item for item in parameters if item.canonical_name != "housing_height"
-            ]
-            indexed.pop("housing_height", None)
             add(
                 "housing_height",
                 sources[0].value - sources[1].value,
@@ -447,7 +444,7 @@ def derive_family_parameters(fused: FusedEvidence) -> FusedEvidence:
             y_length = (indexed["overall_width"].value - indexed["body_width"].value) / 2.0
             if abs(x_length - y_length) <= 0.05:
                 add(
-                    "terminal_length",
+                    "lead_projection",
                     (x_length + y_length) / 2.0,
                     length_sources,
                     "mean((overall_length-body_length)/2,(overall_width-body_width)/2)",

@@ -57,6 +57,7 @@ def parse_dimension_expression(text: str) -> ParsedDimension:
     Returns:
         不带结构语义的尺寸数值；无法识别时 nominal_value 为 ``None``。
     """
+    # 字符归一化 -> normalized是处理之后的字符串
     normalized = (
         str(text)
         .strip()
@@ -68,7 +69,8 @@ def parse_dimension_expression(text: str) -> ParsedDimension:
         .replace("−", "-")
         .replace(" ", " ")
     )
-    # ``p1``、``A1`` 等是工程图符号，不是尺寸数值。只允许尺寸表达式中
+    # 语义防御检查
+    # 工程图上大量文本是符号名而非尺寸，比如 p1、A1、E1.2。如果直接解析，会把尾号 1 误当成尺寸值。
     # 常见的 BSC、REF、mm、UNC 以及半径前缀 R，避免把符号尾号解析成 1。
     semantic_check = re.sub(
         r"\b(?:BSC|REF|MM|UNC|MIN|MAX|NOM|TYP)\b",
@@ -79,10 +81,12 @@ def parse_dimension_expression(text: str) -> ParsedDimension:
     semantic_check = re.sub(r"\bR\s*(?=\d)", "", semantic_check, flags=re.I)
     if re.search(r"[A-Za-z]", semantic_check):
         return ParsedDimension(raw_text=text, unit="unknown")
+    # 辅助信息提取
     quantity_match = re.match(r"\s*(\d+)\s*[-×x]\s*(?=[ØR.]|\d)", normalized, re.I)
     quantity = int(quantity_match.group(1)) if quantity_match else None
     symbol = "Ø" if "Ø" in normalized else ("R" if re.search(r"\bR\s*\d", normalized, re.I) else "")
     is_reference = bool(re.search(r"\bREF\b", normalized, re.I))
+    # 英制/公制双标处理
     parenthesized = re.findall(r"\(([^()]*)\)", normalized)
     if len(parenthesized) > 1:
         return ParsedDimension(
@@ -92,10 +96,16 @@ def parse_dimension_expression(text: str) -> ParsedDimension:
             symbol=symbol,
             is_reference=is_reference,
         )
+    # 取值与单位
+    '''
+    - 有括号就取括号内（公制值）作为 value_text；否则用全文。
+    - 有括号或带 mm 字样 ⇒ 单位是 "mm"，否则 "unknown"。
+    '''
     value_text = parenthesized[-1] if parenthesized else normalized
     value_text = re.sub(r"\bREF\b", "", value_text, flags=re.I).strip()
     unit = "mm" if parenthesized or re.search(r"\bmm\b", normalized, re.I) else "unknown"
 
+    # 对称公差数值模式(由上到下优先级尝试)
     symmetric = re.search(rf"({_NUMBER})\s*±\s*({_NUMBER})", value_text)
     if symmetric:
         nominal = float(symmetric.group(1))
@@ -113,6 +123,7 @@ def parse_dimension_expression(text: str) -> ParsedDimension:
             is_reference=is_reference,
         )
 
+    # 不对称公差数值模式
     asymmetric = re.search(
         rf"({_NUMBER})\s*\+\s*({_NUMBER})\s*/\s*-\s*({_NUMBER})", value_text
     )
@@ -133,6 +144,7 @@ def parse_dimension_expression(text: str) -> ParsedDimension:
             is_reference=is_reference,
         )
 
+    # 值范围模式
     range_match = re.fullmatch(
         rf"\s*({_NUMBER})\s*(?:°|deg)?\s*[-–—]\s*({_NUMBER})\s*(?:°|deg)?\s*",
         value_text,
@@ -151,6 +163,7 @@ def parse_dimension_expression(text: str) -> ParsedDimension:
             is_reference=is_reference,
         )
 
+    # 单值模式
     numbers = re.findall(_NUMBER, value_text)
     nominal = float(numbers[0]) if len(numbers) == 1 else None
     return ParsedDimension(
