@@ -22,6 +22,7 @@ from backend.agents.step.vision.schemas import (
     FusedParameter,
     QwenViewSemanticResult,
     SemanticAssignment,
+    parameter_has_traceable_source,
 )
 
 
@@ -846,7 +847,7 @@ def plan_from_evidence(
 
     for name in REQUIRED_PARAMETERS:
         parameter = indexed[name]
-        if not parameter.evidence_ids or not parameter.token_bboxes:
+        if not parameter_has_traceable_source(parameter):
             raise ValueError(f"鸥翼封装参数缺少可追溯证据：{name}")
         expected_unit = _EXPECTED_UNITS.get(name, "mm")
         if parameter.unit != expected_unit:

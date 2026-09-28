@@ -119,14 +119,16 @@ $env:STEP_USERNAME = "你的API用户名"
 {"action":"cancel","comment":"停止此任务"}
 {"action":"approve","comment":"已查看STEP和预览"}
 {"action":"reject","comment":"引脚结构需要重新检查"}
+{"action":"provide","text":"本体高度=1.2 mm；引脚厚度=0.15 mm"}
+{"action":"provide","values":{"housing_height":{"value":1.2,"unit":"mm"}}}
 ```
 
-上述每行是独立示例。`auto` 仅用于封装阶段，`confirm/change` 仅用于路由阶段，`approve/reject` 仅用于审核阶段。应先查看审核问题中的 `verification`、`golden_comparison`、预览和 STEP 文件，再作决定。审核人和时间由认证 API 写入，客户端无需提交。
+上述每行是独立示例。`auto` 仅用于封装阶段，`confirm/change` 仅用于路由阶段，`approve/reject` 仅用于审核阶段，`provide` 用于封装或尺寸补充阶段。尺寸回答可提交 `action=provide` 和自然语言 `text`；省略 action 时，系统把可识别的参数文本判定为 provide，把明确的取消用语判定为 cancel。更可靠的方式是用 `values`，只提交当前问题 `fields` 中列出的字段。长度默认 mm，也接受 cm、um、mil、inch 并转成 mm；引脚数必须是整数。尺寸答案存为 `human_input`，没有 OCR token 或图像坐标。人工输入的尺寸会导致最终产物进入人工审核。审核前应查看 `verification`、`golden_comparison`、预览和 STEP 文件。审核人和时间由认证 API 写入，客户端无需提交。
 
 | API 状态 | 含义 |
 | --- | --- |
 | `ai_processing` | 正在执行或回答已接收，等待后台继续 |
-| `awaiting_input` | 等待封装或路由回答 |
+| `awaiting_input` | 等待封装、路由或尺寸回答 |
 | `pending_review` | 等待审核回答，可下载候选产物 |
 | `completed` | 成功完成，自动检查未要求人工审核 |
 | `reviewed` | 人工批准后的成功终态 |
@@ -140,7 +142,11 @@ $env:STEP_USERNAME = "你的API用户名"
 
 尺寸门禁因提取不足未通过，且能定位需要复核的视图时，`semantic_review_nodes.py` 逻辑上最多执行 **1 轮**自动复核（`MAX_SEMANTIC_REVIEW_ATTEMPTS = 1`），每个选中视图在正常运行时调用模型 1 次。门禁正常通过时不调用。模型只能重新绑定当前视图已有的 token/line，不注入或修改 OCR 数值，也不替代封装、路由或审核阶段的人工回答。
 
-每个视图返回完整候选集合；证据引用或器件族合同校验失败时，保留该视图原候选。接受的候选须重新经过合并、融合、尺寸链和原尺寸门禁；复核后仍未通过，则按原规则停止，API 状态为 `stopped`。
+每个视图返回完整候选集合；证据引用或器件族合同校验失败时，保留该视图原候选。接受的候选须重新经过合并、融合、尺寸链和原尺寸门禁；复核后仍缺失可填写尺寸时，会进入 `dimensions` 人工询问，而不是立即终止。最多询问 3 轮；问题会列明缺失、冲突或低置信度字段及现有候选值。操作员填入后重新执行确定性派生、尺寸链和门禁；未解决的字段保留在失败报告中，API 状态为 `stopped`。
+
+显式封装名 `TSSOP-16`、`LQFP64` 等仅可补充 `nominal_pin_count`，并记录为 `human_input` 来源；该解析使用有限的封装命名规则，不从任意器件型号末尾猜脚数。若明确封装脚数与图纸识别值不同，系统会询问操作员消歧。
+
+回答槽位只接受当前问题明确列出的规范参数名。系统检查数值、正负范围、单位换算和整数脚数；每次回答保留被替换的图纸候选、操作者和时间。人工尺寸和图纸证据保持分开，Feature IR 会列出 `human_supplied_parameters`，并强制进入最终人工审核。
 
 prepare 节点先把 `semantic_review_attempts = 1` 和待复核区域队列写入 PostgreSQL checkpoint；review 节点每个 superstep 只处理一个视图，提交结果与 `semantic_review_history` 后才处理下一个。恢复时不会重跑已提交的区域；若当前视图尚未提交就崩溃，其外部模型调用仍可能重放，因此不保证物理请求仅发生一次。
 

@@ -171,22 +171,30 @@ class ParsedDimension(BaseModel):
 
 
 class FusedParameter(BaseModel):
-    """同时具有数值、单位、bbox 和证据 ID 的规范参数。"""
+    """规范参数；人工输入不伪造 OCR token 或图像坐标。"""
 
     canonical_name: str
     value: float
     unit: str
     evidence_ids: list[str] = Field(min_length=1)
-    token_ids: list[str] = Field(min_length=1)
+    token_ids: list[str] = Field(default_factory=list)
     line_ids: list[str] = Field(default_factory=list)
-    token_bboxes: list[tuple[int, int, int, int]] = Field(min_length=1)
+    token_bboxes: list[tuple[int, int, int, int]] = Field(default_factory=list)
     target_feature: str
     ocr_confidence: float = Field(ge=0.0, le=1.0)
     semantic_confidence: float = Field(ge=0.0, le=1.0)
     raw_texts: list[str] = Field(default_factory=list)
     evidence_kind: Literal[
-        "dimension_line", "explicit_range", "table_row", "identity_text", "derived"
+        "dimension_line", "explicit_range", "table_row", "identity_text", "derived", "human_input"
     ] = "dimension_line"
+
+
+def parameter_has_traceable_source(parameter: FusedParameter) -> bool:
+    """Require image coordinates for image evidence, operator IDs for manual input."""
+    return bool(parameter.evidence_ids) and (
+        bool(parameter.token_bboxes)
+        or all(item.startswith("human_input:") for item in parameter.evidence_ids)
+    )
 
 
 class FusedEvidence(BaseModel):

@@ -12,7 +12,9 @@ from backend.agents.step.ir.schemas import (
     EvidenceFeatureIR,
     EvidenceValue,
 )
-from backend.agents.step.vision.schemas import FusedEvidence, FusedParameter
+from backend.agents.step.vision.schemas import (
+    FusedEvidence, FusedParameter, parameter_has_traceable_source,
+)
 
 
 FAMILY_IDS: tuple[str, str] = (
@@ -87,7 +89,7 @@ def plan_from_evidence(
         parameter = indexed[name]
         if parameter.unit != "mm":
             raise ValueError(f"两端片式器件参数单位错误：{name}={parameter.unit}")
-        if not parameter.evidence_ids or not parameter.token_bboxes:
+        if not parameter_has_traceable_source(parameter):
             raise ValueError(f"两端片式器件参数缺少可追溯证据：{name}")
         if parameter.value <= 0.0:
             raise ValueError(f"两端片式器件参数必须大于零：{name}")

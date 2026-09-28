@@ -326,6 +326,7 @@ def _derived_parameter(
     formula: str,
 ) -> FusedParameter:
     """从同一输入图的已融合参数构造可追溯尺寸链结果。"""
+    image_sources = [item for item in sources if item.evidence_kind != "human_input"]
     return FusedParameter(
         canonical_name=name,
         value=float(value),
@@ -343,8 +344,8 @@ def _derived_parameter(
             bbox for source in sources for bbox in source.token_bboxes
         )),
         target_feature=f"derived_chain:{formula}",
-        ocr_confidence=min(source.ocr_confidence for source in sources),
-        semantic_confidence=min(source.semantic_confidence for source in sources),
+        ocr_confidence=min((source.ocr_confidence for source in image_sources), default=0.0),
+        semantic_confidence=min((source.semantic_confidence for source in image_sources), default=0.0),
         evidence_kind="derived",
         raw_texts=[
             *[text for source in sources for text in source.raw_texts],

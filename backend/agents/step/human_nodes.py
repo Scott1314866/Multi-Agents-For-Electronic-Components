@@ -1,7 +1,7 @@
 """STEP 工作流的人工询问、回答校验与审核节点。
 
 问题由 LangGraph interrupt 持久化。只有显式 resume 才消费回答；
-人工信息只用于封装身份和审核，不充当 OCR 尺寸证据。
+人工尺寸以独立来源保存，不伪装成 OCR token 或图像坐标。
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import re
 from typing import Any
+from uuid import uuid4
 
 from langgraph.types import interrupt
 
@@ -17,9 +18,15 @@ from backend.agents.step.families.taxonomy import (
     FAMILY_LOCATIONS,
     resolve_family_selection,
 )
+from backend.agents.step.dimension_input import (
+    expected_unit,
+    parse_dimension_answer,
+    parse_package_pin_count,
+)
 
 
 MIN_ROUTING_CONFIDENCE = 0.80
+MAX_HUMAN_DIMENSION_ROUNDS = 3
 _IDENTITY_FIELDS = {
     "family_id", "category_id", "subcategory_id", "package_type",
     "resistor_or_capacitor", "supported_family",
@@ -43,11 +50,16 @@ def validate_human_answer(request: dict, answer: dict) -> dict:
     """校验阶段特有的回答，并剔除客户端提交的 state/审核人等额外字段。"""
     if not isinstance(answer, dict):
         raise ValueError("answer 必须是 JSON 对象")
-    action = _text(answer.get("action"), "action", required=True)
     stage = request.get("stage")
+    raw_action = answer.get("action")
+    if stage == "dimensions" and not raw_action:
+        utterance = str(answer.get("text") or "")
+        raw_action = "cancel" if re.search(r"取消任务|取消|停止生成|终止任务|不做了", utterance) else "provide"
+    action = _text(raw_action, "action", required=True)
     stage_actions = {
         "package": ({"provide", "auto", "cancel"}, "封装询问只接受 provide、auto 或 cancel"),
         "routing": ({"confirm", "change", "cancel"}, "路由询问只接受 confirm、change 或 cancel"),
+        "dimensions": ({"provide", "cancel"}, "参数补充只接受 provide 或 cancel"),
         "review": ({"approve", "reject"}, "审核只接受 approve 或 reject"),
     }
     if stage not in stage_actions:
@@ -92,6 +104,8 @@ def validate_human_answer(request: dict, answer: dict) -> dict:
     elif stage == "review":
         if action == "approve" and not request.get("can_approve", False):
             raise ValueError("产物未通过验证，不能批准")
+    elif stage == "dimensions":
+        normalized = parse_dimension_answer(request, {**answer, "action": action})
     normalized["comment"] = _text(answer.get("comment"), "comment", limit=2000)
     return normalized
 
@@ -243,6 +257,238 @@ async def confirm_template_node(state: dict[str, Any]) -> dict[str, Any]:
         "human_route": answer,
         "human_history": _history(state, "routing", answer),
         "status": "routing_confirmed",
+    }
+
+
+def _store_operator_dimensions(
+    state: dict[str, Any], values: dict[str, dict[str, Any]], question_id: str,
+    *, actor: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Add explicit operator evidence while preserving its distinct provenance."""
+    from backend.agents.step.vision.schemas import FusedEvidence, FusedParameter
+
+    fused = FusedEvidence.model_validate(state["fused_evidence"])
+    parameters = {item.canonical_name: item for item in fused.parameters}
+    before = {
+        field: [item.model_dump(mode="json") for item in fused.parameters if item.canonical_name == field]
+        for field in values
+    }
+    for field, slot in values.items():
+        if not isinstance(slot, dict):
+            slot = {"value": slot, "unit": expected_unit(field)}
+        unit = str(slot["unit"])
+        value = float(slot["value"])
+        parameters[field] = FusedParameter(
+            canonical_name=field,
+            value=value,
+            unit=unit,
+            evidence_ids=[f"human_input:{question_id}:{field}"],
+            token_ids=[],
+            line_ids=[],
+            token_bboxes=[],
+            target_feature=f"operator_confirmed:{field}",
+            ocr_confidence=0.0,
+            semantic_confidence=0.0,
+            raw_texts=[f"operator supplied {field}={value:g} {unit}"],
+            evidence_kind="human_input",
+        )
+    # Derived slots depend on their source values. Drop them before the graph
+    # recomputes deterministic family relations after this operator update.
+    invalidated_derived_fields = {
+        name for name, item in parameters.items() if item.evidence_kind == "derived"
+    }
+    parameters = {
+        name: item for name, item in parameters.items()
+        if item.evidence_kind != "derived"
+    }
+    def conflict_is_overridden(conflict: str) -> bool:
+        if conflict in values or conflict in invalidated_derived_fields:
+            return True
+        return any(
+            re.search(rf"(?<![\w]){re.escape(field)}(?![\w])", conflict)
+            for field in {*values, *invalidated_derived_fields}
+        )
+
+    fused = fused.model_copy(update={
+        "parameters": list(parameters.values()),
+        "conflicting_fields": [
+            name for name in fused.conflicting_fields if not conflict_is_overridden(name)
+        ],
+        "unit_conflicts": [
+            name for name in fused.unit_conflicts
+            if name not in values and name not in invalidated_derived_fields
+        ],
+        "missing_evidence_assignments": [
+            name for name in fused.missing_evidence_assignments
+            if name not in values and name not in invalidated_derived_fields
+        ],
+        "unresolved_fields": [
+            name for name in fused.unresolved_fields
+            if name not in values and name not in invalidated_derived_fields
+        ],
+    })
+    entry = {
+        "question_id": question_id,
+        "values": values,
+        "superseded_candidates": before,
+        **(actor or {}),
+    }
+    return {
+        "fused_evidence": fused.model_dump(mode="json"),
+        "human_dimension_history": [*state.get("human_dimension_history", []), entry],
+    }
+
+
+def _dimension_question(state: dict[str, Any], fields: list[str], question_id: str) -> dict[str, Any]:
+    from backend.agents.step.families.registry import image_family_catalog
+
+    fused = state.get("fused_evidence") or {}
+    contract = image_family_catalog().get(fused.get("family_id"), {})
+    guidance = contract.get("parameter_guidance", {})
+    existing: dict[str, list[dict[str, Any]]] = {}
+    for parameter in fused.get("parameters", []):
+        if parameter.get("canonical_name") in fields:
+            existing.setdefault(parameter["canonical_name"], []).append({
+                "value": parameter.get("value"), "unit": parameter.get("unit"),
+                "evidence_kind": parameter.get("evidence_kind"),
+            })
+    field_specs = {
+        field: {
+            "unit": expected_unit(field),
+            "description": guidance.get(field, field.replace("_", " ")),
+            "reason": (
+                "图纸未能唯一识别该参数" if field in (state.get("dimension_gate") or {}).get("missing_fields", [])
+                else "图纸中的候选值存在冲突或置信度不足"
+            ),
+            "observed_candidates": existing.get(field, []),
+        }
+        for field in fields
+    }
+    package_count = parse_package_pin_count(str(state.get("package_type_hint") or ""))
+    if package_count is not None and "nominal_pin_count" in field_specs:
+        field_specs["nominal_pin_count"]["operator_package_hint"] = {
+            "package_type": state.get("package_type_hint"),
+            "pin_count": package_count,
+        }
+    return {
+        "stage": "dimensions",
+        "question_id": question_id,
+        "question": (
+            "尺寸门禁发现以下参数缺失、冲突或置信度不足。请按参数名填写数值；"
+            "长度默认 mm，也可注明 mm/cm/um/mil/inch；引脚数填整数。"
+        ),
+        "options": ["provide", "cancel"],
+        "fields": field_specs,
+        "intent": "fill_missing_or_resolve_conflicting_dimension_slots",
+        "examples": [
+            "本体高度=1.2 mm；引脚厚度=0.15 mm",
+            "{\"values\": {\"housing_height\": {\"value\": 1.2, \"unit\": \"mm\"}}}",
+        ],
+        "validation_error": state.get("dimension_input_error"),
+    }
+
+
+def actionable_dimension_fields(state: dict[str, Any]) -> list[str]:
+    """Map gate fields and relationship conflicts back to real family slots."""
+    from backend.agents.step.families.registry import image_family_catalog
+
+    fused = state.get("fused_evidence") or {}
+    contract = image_family_catalog().get(fused.get("family_id"), {})
+    allowed = set(contract.get("required_parameters", []))
+    gate = state.get("dimension_gate") or {}
+    raw = [
+        *gate.get("missing_fields", []),
+        *gate.get("conflicting_fields", []),
+        *gate.get("low_confidence_fields", []),
+    ]
+    fields: set[str] = set()
+    for item in raw:
+        name = str(item)
+        if name in allowed:
+            fields.add(name)
+            continue
+        if name.startswith("feature:"):
+            continue
+        # A deterministic chain violation is a relationship, not a slot name.
+        fields.update(field for field in allowed if re.search(rf"(?<![\w]){re.escape(field)}(?![\w])", name))
+    return sorted(fields)
+
+
+async def ask_missing_dimensions_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Ask an operator to fill dimension slots the drawing cannot resolve."""
+    gate = state.get("dimension_gate") or {}
+    fused = state.get("fused_evidence") or {}
+    pin_count = parse_package_pin_count(str(state.get("package_type_hint") or ""))
+    existing_count = next((
+        item for item in fused.get("parameters", [])
+        if item.get("canonical_name") == "nominal_pin_count"
+    ), None)
+
+    # An explicit operator supplied package such as TSSOP-16 provides a pin
+    # count identity slot. This is audited as human package input, never OCR.
+    if (
+        pin_count is not None
+        and existing_count is None
+        and "nominal_pin_count" in gate.get("missing_fields", [])
+    ):
+        stored = _store_operator_dimensions(
+            {**state, "fused_evidence": fused},
+            {"nominal_pin_count": {"value": pin_count, "unit": "count"}},
+            "human_package_type",
+            actor={"source": "explicit_package_name"},
+        )
+        fused = stored["fused_evidence"]
+        gate = {**gate, "missing_fields": [
+            name for name in gate.get("missing_fields", []) if name != "nominal_pin_count"
+        ]}
+        state = {**state, "fused_evidence": fused, "dimension_gate": gate,
+                 "human_dimension_history": [*state.get("human_dimension_history", []),
+                                              *stored["human_dimension_history"][-1:]]}
+    elif pin_count is not None and existing_count is not None and float(existing_count["value"]) != pin_count:
+        conflicts = sorted(set([*gate.get("conflicting_fields", []), "nominal_pin_count"]))
+        gate = {**gate, "conflicting_fields": conflicts}
+        state = {**state, "dimension_gate": gate}
+    fields = actionable_dimension_fields(state)
+    if not fields:
+        updates: dict[str, Any] = {"status": "dimensions_supplied", "fused_evidence": fused}
+        history = state.get("human_dimension_history", [])
+        if history:
+            from backend.agents.step.image_nodes import _write_json
+            artifacts = dict(state.get("artifact_paths", {}))
+            artifacts["human_dimension_history"] = _write_json(
+                Path(state["output_dir"]) / "human_dimension_history.json", history
+            )
+            updates.update({
+                "human_dimension_history": history,
+                "artifact_paths": artifacts,
+            })
+        return updates
+
+    question_id = uuid4().hex
+    request = _dimension_question({**state, "fused_evidence": fused}, fields, question_id)
+    answer = _ask(request)
+    if answer["action"] == "cancel":
+        return _cancelled(state, "dimensions", answer)
+    actor = {key: answer[key] for key in ("user_id", "answered_at") if answer.get(key)}
+    stored = _store_operator_dimensions(
+        {**state, "fused_evidence": fused}, answer["values"], question_id, actor=actor,
+    )
+    dimension_history = [
+        *state.get("human_dimension_history", []),
+        *stored["human_dimension_history"][-1:],
+    ]
+    artifacts = dict(state.get("artifact_paths", {}))
+    audit_path = Path(state["output_dir"]) / "human_dimension_history.json"
+    from backend.agents.step.image_nodes import _write_json
+    artifacts["human_dimension_history"] = _write_json(audit_path, dimension_history)
+    return {
+        "fused_evidence": stored["fused_evidence"],
+        "human_dimension_history": dimension_history,
+        "artifact_paths": artifacts,
+        "human_dimension_rounds": int(state.get("human_dimension_rounds", 0)) + 1,
+        "human_history": _history(state, "dimensions", answer),
+        "dimension_input_error": None,
+        "status": "dimensions_supplied",
     }
 
 

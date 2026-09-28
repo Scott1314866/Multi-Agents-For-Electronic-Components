@@ -48,6 +48,9 @@ class ImageToStepState(TypedDict, total=False):
     human_route: dict[str, Any]
     human_review: dict[str, Any]
     human_history: list[dict[str, Any]]
+    human_dimension_history: list[dict[str, Any]]
+    human_dimension_rounds: int
+    dimension_input_error: str | None
     needs_review: bool
 
     # 本地图片与视觉证据

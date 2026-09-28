@@ -6,7 +6,9 @@ from typing import Any, Iterable
 
 from backend.agents.step.features import gullwing_lead
 from backend.agents.step.ir.schemas import EvidenceCADFeature, EvidenceFeatureIR, EvidenceValue
-from backend.agents.step.vision.schemas import FusedEvidence, FusedParameter
+from backend.agents.step.vision.schemas import (
+    FusedEvidence, FusedParameter, parameter_has_traceable_source,
+)
 
 
 FAMILY_ID = "ic/quad_gullwing_ic"
@@ -83,7 +85,7 @@ def plan_from_evidence(
     for name in REQUIRED_PARAMETERS:
         item = indexed[name]
         expected_unit = "count" if name == "nominal_pin_count" else "mm"
-        if item.unit != expected_unit or not item.evidence_ids or not item.token_bboxes:
+        if item.unit != expected_unit or not parameter_has_traceable_source(item):
             raise ValueError(f"四边鸥翼参数证据或单位无效：{name}")
 
     count_value = indexed["nominal_pin_count"].value

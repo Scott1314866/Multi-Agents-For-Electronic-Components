@@ -1794,6 +1794,9 @@ async def validate_dimension_chain_node(state: dict[str, Any]) -> dict[str, Any]
     """
     try:
         fused = FusedEvidence.model_validate(state["fused_evidence"])
+        # Human-supplied values may complete deterministic size chains (for
+        # example, an explicit pin count plus the drawing's terminal pitch).
+        fused = derive_family_parameters(fused)
         values = {item.canonical_name: item.value for item in fused.parameters}
         conflicts: list[str] = []
         checked_relationships = 0
@@ -1903,6 +1906,10 @@ async def validate_dimension_chain_node(state: dict[str, Any]) -> dict[str, Any]
         payload["conflicting_fields"] = sorted(set([
             *payload.get("conflicting_fields", []), *conflicts
         ]))
+        artifacts = dict(state.get("artifact_paths", {}))
+        artifacts["fused_evidence"] = _write_json(
+            Path(state["output_dir"]) / "fused_evidence.json", payload
+        )
         result = {
             "passed": not conflicts,
             "conflicts": conflicts,
@@ -1914,6 +1921,7 @@ async def validate_dimension_chain_node(state: dict[str, Any]) -> dict[str, Any]
         return {
             "fused_evidence": payload,
             "dimension_chain_result": result,
+            "artifact_paths": artifacts,
             "status": "dimension_chain_validated",
         }
     except Exception as exc:
@@ -2014,6 +2022,21 @@ async def create_feature_ir_node(state: dict[str, Any]) -> dict[str, Any]:
             state["fused_evidence"],
             source_image_sha256=state["image_meta"]["sha256"],
         )
+        manual_parameters = {
+            item["canonical_name"]: {"value": item["value"], "unit": item["unit"],
+                                     "evidence_ids": item["evidence_ids"]}
+            for item in state["fused_evidence"].get("parameters", [])
+            if item.get("evidence_kind") == "human_input"
+        }
+        if manual_parameters:
+            feature_ir = {
+                **feature_ir,
+                "human_supplied_parameters": manual_parameters,
+                "assumptions": [
+                    *(feature_ir.get("assumptions") or []),
+                    "部分建模尺寸由操作员明确提供，已保留 human_input 来源并需人工审核。",
+                ],
+            }
         path = Path(state["output_dir"]) / "feature_ir.json"
         artifacts = dict(state.get("artifact_paths", {}))
         artifacts["feature_ir"] = _write_json(path, feature_ir)
@@ -2756,7 +2779,7 @@ def route_continue_or_failed(state: dict[str, Any]) -> str:
 
 
 def route_after_dimension_gate(state: dict[str, Any]) -> str:
-    """尺寸门禁路由：证据不足时安全停止。"""
+    """尺寸门禁路由：先复核视觉绑定，再询问操作员补齐可填写参数。"""
     gate = state.get("dimension_gate", {})
     if gate.get("passed"):
         return "continue"
@@ -2767,6 +2790,11 @@ def route_after_dimension_gate(state: dict[str, Any]) -> str:
     from backend.agents.step.semantic_review_nodes import semantic_review_regions
     if semantic_review_regions(state):
         return "review"
+    rounds = int(state.get("human_dimension_rounds", 0))
+    from backend.agents.step.human_nodes import actionable_dimension_fields
+    from backend.agents.step.human_nodes import MAX_HUMAN_DIMENSION_ROUNDS
+    if actionable_dimension_fields(state) and rounds < MAX_HUMAN_DIMENSION_ROUNDS:
+        return "human"
     return "stop"
 
 

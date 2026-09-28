@@ -80,7 +80,7 @@ def _pending_input(snapshot: dict) -> dict | None:
     item = interrupts[0]
     request = item.get("value")
     if not isinstance(request, dict) or request.get("stage") not in {
-        "package", "routing", "review"
+        "package", "routing", "dimensions", "review"
     }:
         raise ValueError("STEP checkpoint 含有无法识别的人工询问")
     return {**request, "interrupt_id": item["id"]}
@@ -218,6 +218,7 @@ async def _persist_job_snapshot(
         "human_route": state.get("human_route"),
         "human_review": review or None,
         "human_history": state.get("human_history", []),
+        "human_dimension_history": state.get("human_dimension_history", []),
         "pending_input": _pending_input(snapshot),
         "checkpoint_id": snapshot.get("checkpoint_id"),
         "next_nodes": snapshot.get("next_nodes", []),
