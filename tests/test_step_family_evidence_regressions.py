@@ -100,6 +100,28 @@ def _quad(*, omit: set[str] | None = None) -> FusedEvidence:
     )
 
 
+def test_gullwing_planner_accepts_human_parameter_without_fake_bbox():
+    fused = _gullwing()
+    original = next(item for item in fused.parameters if item.canonical_name == "body_width")
+    human = original.model_copy(update={
+        "value": 4.9,
+        "evidence_ids": ["human_input:operator-question:body_width"],
+        "token_ids": [],
+        "token_bboxes": [],
+        "line_ids": [],
+        "target_feature": "operator_confirmed:body_width",
+        "ocr_confidence": 0.0,
+        "semantic_confidence": 0.0,
+        "raw_texts": ["operator supplied body_width=4.9 mm"],
+        "evidence_kind": "human_input",
+    })
+    fused = fused.model_copy(update={
+        "parameters": [human if item.canonical_name == "body_width" else item for item in fused.parameters]
+    })
+    feature_ir = gullwing_ic.plan_from_evidence(fused, source_image_sha256="a" * 64)
+    assert "human_input:operator-question:body_width" in feature_ir["source_dimensions"]["body_width"]["evidence_ids"]
+
+
 def _indexed(fused: FusedEvidence) -> dict[str, FusedParameter]:
     return {item.canonical_name: item for item in fused.parameters}
 

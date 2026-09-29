@@ -409,13 +409,23 @@ def validate_fused_dimensions(
     low_confidence = [
         name
         for name, parameter in indexed.items()
-        if parameter.ocr_confidence < minimum_ocr_confidence
-        or parameter.semantic_confidence < (
-            min(minimum_semantic_confidence, 0.80)
-            if parameter.evidence_kind == "table_row"
-            else min(minimum_semantic_confidence, 0.75)
-            if parameter.evidence_kind == "explicit_range"
-            else minimum_semantic_confidence
+        if (
+            parameter.evidence_kind != "human_input"
+            and not (
+                parameter.evidence_kind == "derived"
+                and parameter.evidence_ids
+                and all(item.startswith("human_input:") for item in parameter.evidence_ids)
+            )
+            and (
+                parameter.ocr_confidence < minimum_ocr_confidence
+                or parameter.semantic_confidence < (
+                    min(minimum_semantic_confidence, 0.80)
+                    if parameter.evidence_kind == "table_row"
+                    else min(minimum_semantic_confidence, 0.75)
+                    if parameter.evidence_kind == "explicit_range"
+                    else minimum_semantic_confidence
+                )
+            )
         )
     ]
     conflicting = [*fused.conflicting_fields, *fused.unit_conflicts]

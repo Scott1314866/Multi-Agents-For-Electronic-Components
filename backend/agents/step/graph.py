@@ -4,6 +4,7 @@ from langgraph.graph import END, START, StateGraph
 
 from backend.agents.step.human_nodes import (
     ask_package_node,
+    ask_missing_dimensions_node,
     confirm_template_node,
     review_result_node,
     route_after_human_input,
@@ -156,6 +157,7 @@ def build_image_to_step_graph(checkpointer=None):
     builder = StateGraph(ImageToStepState)
     builder.add_node("ask_package", ask_package_node)
     builder.add_node("confirm_template", confirm_template_node)
+    builder.add_node("ask_missing_dimensions", ask_missing_dimensions_node)
     builder.add_node("review_result", review_result_node)
     builder.add_node("load_image", load_image_node)
     builder.add_node("preprocess_image", preprocess_image_node)
@@ -275,7 +277,12 @@ def build_image_to_step_graph(checkpointer=None):
             "follow_up": "needs_human_follow_up",
             "unsupported": "stopped_unsupported_template",
             "review": "prepare_semantic_review",
+            "human": "ask_missing_dimensions",
         },
+    )
+    builder.add_conditional_edges(
+        "ask_missing_dimensions", route_after_human_input,
+        {"continue": "validate_dimension_chain", "cancelled": END},
     )
     builder.add_edge("prepare_semantic_review", "review_semantics")
     builder.add_conditional_edges(

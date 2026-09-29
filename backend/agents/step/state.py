@@ -39,8 +39,12 @@ class DrawingToStepState(TypedDict, total=False):
 class ImageToStepState(TypedDict, total=False):
     """单张工程图图片到 STEP 的证据链工作流状态。"""
 
+    task: str
+    mode: str
     # 唯一必填输入
     image_path: str
+    # 用户层自然语言请求由 API Input Adapter 写入；分类和参数仍由 Agent 生成。
+    human_request: str
 
     # 人工回答由 interrupt/resume 接收，和原始视觉证据分别持久化。
     package_type_hint: str
@@ -48,6 +52,9 @@ class ImageToStepState(TypedDict, total=False):
     human_route: dict[str, Any]
     human_review: dict[str, Any]
     human_history: list[dict[str, Any]]
+    human_dimension_history: list[dict[str, Any]]
+    human_dimension_rounds: int
+    dimension_input_error: str | None
     needs_review: bool
 
     # 本地图片与视觉证据

@@ -9,7 +9,9 @@ from backend.agents.step.ir.schemas import (
     EvidenceFeatureIR,
     EvidenceValue,
 )
-from backend.agents.step.vision.schemas import FusedEvidence, FusedParameter
+from backend.agents.step.vision.schemas import (
+    FusedEvidence, FusedParameter, parameter_has_traceable_source,
+)
 
 
 FAMILY_ID = "connector/cn/dsub_connector"
@@ -90,7 +92,7 @@ def plan_from_evidence(
         raise ValueError(f"D-SUB Feature IR 缺少关键参数：{missing}")
     for name in REQUIRED_PARAMETERS:
         parameter = indexed[name]
-        if not parameter.evidence_ids or not parameter.token_bboxes:
+        if not parameter_has_traceable_source(parameter):
             raise ValueError(f"D-SUB 参数缺少可追溯证据：{name}")
         expected_unit = "count" if name == "circuit_count" else "mm"
         if parameter.unit != expected_unit:

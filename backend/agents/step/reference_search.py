@@ -13,7 +13,7 @@ import re
 import socket
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlencode, urljoin, urlparse
 
 import httpx
 
@@ -25,7 +25,10 @@ _STEP_URL_RE = re.compile(
     re.IGNORECASE,
 )
 _IDENTIFIER_RE = re.compile(r"(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9][A-Za-z0-9._+-]{3,39}")
-_GENERIC_ID_PREFIXES = ("ISO", "JEDEC", "MO-", "REV", "FIG", "TABLE")
+_GENERIC_ID_PREFIXES = (
+    "ISO", "JEDEC", "MO-", "REV", "FIG", "TABLE", "PIN", "QFN",
+    "VQFN", "UFQFPN",
+)
 _GENERIC_ID_TERMS = (
     "FEMALE",
     "MALE",
@@ -147,6 +150,62 @@ def extract_manufacturer_names(tokens: list[dict[str, Any]]) -> list[str]:
     ]
 
 
+def _package_pin_count(package_type: str) -> int | None:
+    match = re.search(
+        r"(?:QFN|VQFN|UFQFPN)[- ]?(\d{1,3})", package_type, re.I
+    )
+    return int(match.group(1)) if match else None
+
+
+def extract_explicit_package_code(
+    tokens: list[dict[str, Any]],
+    manufacturers: list[str],
+    package_type: str,
+) -> str | None:
+    """提取与已识别封装类型一起出现的显式厂商封装代码。"""
+    if not manufacturers:
+        return None
+    pin_count = _package_pin_count(package_type)
+    if pin_count is None:
+        return None
+    codes = [
+        str(token.get("text", "")).strip().upper()
+        for token in tokens
+        if float(token.get("confidence", 0.0)) >= 0.80
+        and re.fullmatch(r"[A-Z]{2,8}", str(token.get("text", "")).strip())
+    ]
+    return codes[0] if codes else None
+
+
+def _ti_cad_part_number_candidates(
+    identifiers: list[str], package_code: str | None
+) -> list[str]:
+    """为 TI CAD 目录生成系列号候选，始终保留原始订购码作回退。"""
+    candidates: list[str] = []
+    code = (package_code or "").upper()
+    for identifier in identifiers:
+        value = str(identifier).strip()
+        upper = value.upper()
+        if code:
+            stem = upper
+            for reel_suffix in ("R", "T"):
+                package_suffix = f"{code}{reel_suffix}"
+                if stem.endswith(package_suffix):
+                    stem = stem[:-len(package_suffix)]
+                    break
+            else:
+                if stem.endswith(code):
+                    stem = stem[:-len(code)]
+            if stem and stem != upper:
+                # WebBench may index a shared device family without the
+                # single-letter orderable variant preceding the package code.
+                if stem[-1:].isalpha() and len(stem) > 1:
+                    candidates.append(stem[:-1])
+                candidates.append(stem)
+        candidates.append(value)
+    return list(dict.fromkeys(candidates))
+
+
 def classify_result_match(
     result: dict[str, Any],
     identifiers: list[str],
@@ -171,8 +230,17 @@ def classify_result_match(
             re.sub(r"[^a-z0-9]+", "", identifier.casefold()) in compact
             for identifier in identifiers
         )
-    if exact_match:
+    parsed_url = urlparse(str(result.get("url", "")))
+    is_ti_package_library = (
+        (parsed_url.hostname or "").casefold() == "webench.ti.com"
+        and parsed_url.path.casefold() == "/cad/cad.cgi"
+    )
+    # TI's CAD endpoint returns package-level geometry,
+    # so even a product-number query must go through Feature IR adaptation.
+    if exact_match and not is_ti_package_library:
         return "exact"
+    if exact_match and is_ti_package_library:
+        return "similar"
     package_terms = [
         re.sub(r"[^a-z0-9]+", "", term.casefold())
         for term in re.findall(r"[A-Za-z]+(?:-?\d+)?", package_type)
@@ -185,12 +253,17 @@ def _search_queries(
     identifiers: list[str],
     package_type: str,
     manufacturers: list[str],
+    package_code: str | None = None,
 ) -> list[str]:
     """构造通用检索、官方域名检索和占位料号前缀检索。"""
     primary = identifiers[0] if identifiers else ""
+    manufacturer = manufacturers[0] if manufacturers else ""
+    if manufacturer == "Texas Instruments" and package_code:
+        ti_part_numbers = _ti_cad_part_number_candidates(identifiers, package_code)
+        if ti_part_numbers:
+            primary = ti_part_numbers[0]
     prefix = re.split(r"X{2,}", primary, flags=re.I)[0].rstrip("-_.+")
     identity_text = " ".join(identifiers[:2]).strip()
-    manufacturer = manufacturers[0] if manufacturers else ""
     generic_query = " ".join(item for item in (
         manufacturer,
         identity_text,
@@ -201,6 +274,13 @@ def _search_queries(
     official_domain = _MANUFACTURER_SEARCH_DOMAINS.get(manufacturer)
     if official_domain and (prefix or primary):
         queries.append(f"site:{official_domain} {prefix or primary}")
+    if manufacturer == "Texas Instruments" and primary and package_code:
+        queries.append(
+            f'site:vendor.ultralibrarian.com/TI/embedded/ "{primary}" {package_code}'
+        )
+        queries.append(
+            f'site:webench.ti.com/cad/cad.cgi "{primary}" {package_code} STEP'
+        )
     queries.append(generic_query)
     if prefix and prefix.casefold() != primary.casefold():
         queries.append(f'"{prefix}" STEP STP 3D CAD model')
@@ -285,20 +365,112 @@ async def _download_public_step(url: str, output_path: Path) -> bool:
         return False
 
 
+async def _download_ti_qfn_package_reference(
+    *,
+    product_identifiers: list[str],
+    package_code: str | None,
+    package_type: str,
+    output_dir: Path,
+) -> dict[str, Any] | None:
+    """从 TI 公开 CAD 页面发现并下载匹配封装代码/针数的 STEP。"""
+    pin_count = _package_pin_count(package_type)
+    if not product_identifiers or not package_code or not pin_count:
+        return None
+    family_identifiers = _ti_cad_part_number_candidates(
+        product_identifiers, package_code
+    )
+    for family_index, family_identifier in enumerate(family_identifiers):
+        source_page = "https://webench.ti.com/cad/cad.cgi?" + urlencode({
+            "partno": family_identifier,
+        })
+        step_urls = await _discover_step_urls(source_page)
+        for link_index, download_url in enumerate(step_urls):
+            file_stem = Path(urlparse(download_url).path).stem.upper()
+            package_match = re.match(
+                rf"{re.escape(package_code.upper())}(\d{{2,3}})", file_stem
+            )
+            if not package_match or int(package_match.group(1)) != pin_count:
+                continue
+            local_path = (
+                output_dir / "web_reference"
+                / f"candidate_ti_{package_code.upper()}_{pin_count}_{family_index}_{link_index}.step"
+            )
+            if not await _download_public_step(download_url, local_path):
+                continue
+            return {
+                "match_type": "similar",
+                "candidate_type": "official_package_reference",
+                "title": f"Texas Instruments {package_code.upper()} {pin_count}-pin package model",
+                "source_page": source_page,
+                "download_url": download_url,
+                "local_path": str(local_path),
+            }
+    return None
+
+
 async def search_public_step_candidates(
     *,
     identifiers: list[str],
     package_type: str,
     output_dir: Path,
     manufacturers: list[str] | None = None,
+    package_code: str | None = None,
     max_results: int = 6,
 ) -> dict[str, Any]:
     """搜索并下载少量公开 STEP 候选，搜索失败时返回空结果。"""
     manufacturers = manufacturers or []
-    queries = _search_queries(identifiers, package_type, manufacturers)
+    queries = _search_queries(identifiers, package_type, manufacturers, package_code)
     query = queries[0] if queries else ""
+    primary_identifier = identifiers[0] if identifiers else ""
+    ti_catalog_url = None
+    if (
+        "Texas Instruments" in manufacturers
+        and package_code
+        and _package_pin_count(package_type)
+        and identifiers
+    ):
+        ti_part_numbers = _ti_cad_part_number_candidates(identifiers, package_code)
+        ti_catalog_url = "https://vendor.ultralibrarian.com/TI/embedded/?" + urlencode({
+            "gpn": ti_part_numbers[0] if ti_part_numbers else primary_identifier,
+            "package": package_code,
+            "pin": str(_package_pin_count(package_type)),
+        })
     if not queries:
         return {"status": "not_found", "query": "", "candidates": []}
+    # 查询 TI 公开 CAD 页面，从页面当前公开的 STEP 链接中选择匹配封装，
+    # 避免将某个封装代码或文件命名规则固定在下载逻辑里。
+    if (
+        "Texas Instruments" in manufacturers
+        and package_code
+        and _package_pin_count(package_type)
+        and identifiers
+    ):
+        ti_package_candidate = await _download_ti_qfn_package_reference(
+            product_identifiers=identifiers,
+            package_code=package_code,
+            package_type=package_type,
+            output_dir=output_dir,
+        )
+        if ti_package_candidate:
+            return {
+                "status": "candidates_found",
+                "query": queries[-1],
+                "queries": queries,
+                "search_strategy": "official_package_catalog_fast_path",
+                "agentic_search": {
+                    "status": "skipped_official_package_reference_found",
+                    "trace": [],
+                },
+                "identifiers": identifiers,
+                "manufacturers": manufacturers,
+                "package_type": package_type,
+                "catalog_sources": ([{
+                    "provider": "Ultra Librarian for TI",
+                    "url": ti_catalog_url,
+                    "status": "manual_product_export_available",
+                }] if ti_catalog_url else []),
+                "candidates": [ti_package_candidate],
+            }
     results: list[dict[str, Any]] = []
     search_errors: list[str] = []
     agentic_report: dict[str, Any] = {}
@@ -311,7 +483,8 @@ async def search_public_step_candidates(
             context=(
                 f"厂商：{' '.join(manufacturers) or '未知'}；"
                 f"料号：{' '.join(identifiers) or '未知'}；"
-                f"封装：{package_type or '未知'}"
+                f"封装：{package_type or '未知'}；"
+                f"厂商封装代码：{package_code or '未知'}"
             ),
             max_rounds=2,
             max_queries_per_round=3,
@@ -347,50 +520,117 @@ async def search_public_step_candidates(
         except Exception as exc:
             search_errors.append(f"{current_query}: {exc}")
     if not results and search_errors:
+        ti_package_candidate = await _download_ti_qfn_package_reference(
+            product_identifiers=identifiers,
+            package_code=package_code,
+            package_type=package_type,
+            output_dir=output_dir,
+        )
+        if ti_package_candidate:
+            return {
+                "status": "candidates_found",
+                "query": query,
+                "queries": queries,
+                "agentic_search": {"status": "unavailable", "trace": []},
+                "identifiers": identifiers,
+                "manufacturers": manufacturers,
+                "package_type": package_type,
+                "catalog_sources": ([{
+                    "provider": "Ultra Librarian for TI",
+                    "url": ti_catalog_url,
+                    "status": "manual_export_required",
+                }] if ti_catalog_url else []),
+                "candidates": [ti_package_candidate],
+            }
         return {
             "status": "search_unavailable",
             "query": query,
             "queries": queries,
             "candidates": [],
+            "catalog_sources": ([{
+                "provider": "Ultra Librarian for TI",
+                "url": ti_catalog_url,
+                "status": "manual_export_required",
+            }] if ti_catalog_url else []),
             "error": "; ".join(search_errors),
         }
     unique_results: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
     for result in results:
-        url = str(result.get("url", ""))
-        if url and url not in seen_urls:
-            seen_urls.add(url)
-            unique_results.append(result)
-
-    candidates: list[dict[str, Any]] = []
-    cache_dir = output_dir / "web_reference"
-    for result_index, result in enumerate(unique_results):
         if not isinstance(result, dict):
             continue
-        match_type = classify_result_match(result, identifiers, package_type)
-        if match_type == "none":
-            continue
-        page_url = str(result.get("url", ""))
-        direct_urls = (
-            [page_url]
-            if re.search(r"\.(?:step|stp)(?:\?|$)", page_url, re.I)
-            else await _discover_step_urls(page_url)
+        url = str(result.get("url", "")).strip()
+        parsed_url = urlparse(url)
+        normalized_url = parsed_url._replace(
+            scheme=parsed_url.scheme.casefold(),
+            netloc=parsed_url.netloc.casefold(),
+            fragment="",
+        ).geturl().rstrip("/")
+        if normalized_url and normalized_url not in seen_urls:
+            seen_urls.add(normalized_url)
+            unique_results.append(result)
+
+    # 精确料号结果优先处理，避免较早出现的封装相似结果挤掉精确命中。
+    # 同时限制并发数，缩短网页读取/下载等待时间而不对外站造成突发请求。
+    ranked_results = [
+        (classify_result_match(result, identifiers, package_type), index, result)
+        for index, result in enumerate(unique_results)
+    ]
+    ranked_results = [item for item in ranked_results if item[0] != "none"]
+    ranked_results.sort(key=lambda item: (item[0] != "exact", item[1]))
+    ranked_results = ranked_results[: max(6, min(max_results * 2, 12))]
+    exact_results = [item for item in ranked_results if item[0] == "exact"]
+    similar_results = [item for item in ranked_results if item[0] == "similar"]
+
+    cache_dir = output_dir / "web_reference"
+    semaphore = asyncio.Semaphore(3)
+
+    async def resolve_result(
+        match_type: str,
+        result_index: int,
+        result: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        async with semaphore:
+            page_url = str(result.get("url", "")).strip()
+            direct_urls = (
+                [page_url]
+                if re.search(r"\.(?:step|stp)(?:\?|$)", page_url, re.I)
+                else await _discover_step_urls(page_url)
+            )
+            for link_index, step_url in enumerate(dict.fromkeys(direct_urls[:3])):
+                local_path = cache_dir / f"candidate_{result_index:02d}_{link_index:02d}.step"
+                if await _download_public_step(step_url, local_path):
+                    return {
+                        "match_type": match_type,
+                        "title": str(result.get("title", "")),
+                        "source_page": page_url,
+                        "download_url": step_url,
+                        "local_path": str(local_path),
+                    }
+        return None
+
+    resolved_exact = await asyncio.gather(*(
+        resolve_result(match_type, index, result)
+        for match_type, index, result in exact_results
+    ))
+    candidates = [candidate for candidate in resolved_exact if candidate is not None]
+    if not candidates:
+        ti_package_candidate = await _download_ti_qfn_package_reference(
+            product_identifiers=identifiers,
+            package_code=package_code,
+            package_type=package_type,
+            output_dir=output_dir,
         )
-        for link_index, step_url in enumerate(direct_urls[:3]):
-            local_path = cache_dir / f"candidate_{result_index:02d}_{link_index:02d}.step"
-            if not await _download_public_step(step_url, local_path):
-                continue
-            candidates.append({
-                "match_type": match_type,
-                "title": str(result.get("title", "")),
-                "source_page": page_url,
-                "download_url": step_url,
-                "local_path": str(local_path),
-            })
-            break
-        if len(candidates) >= 3:
-            break
-    candidates.sort(key=lambda item: 0 if item["match_type"] == "exact" else 1)
+        if ti_package_candidate:
+            candidates = [ti_package_candidate]
+        elif similar_results:
+            resolved_similar = await asyncio.gather(*(
+                resolve_result(match_type, index, result)
+                for match_type, index, result in similar_results
+            ))
+            candidates = [candidate for candidate in resolved_similar if candidate is not None]
+    candidates.sort(key=lambda candidate: candidate["match_type"] != "exact")
+    candidates = candidates[:3]
     return {
         "status": "candidates_found" if candidates else "not_found",
         "query": query,
@@ -406,5 +646,10 @@ async def search_public_step_candidates(
         "identifiers": identifiers,
         "manufacturers": manufacturers,
         "package_type": package_type,
+        "catalog_sources": ([{
+            "provider": "Ultra Librarian for TI",
+            "url": ti_catalog_url,
+            "status": "manual_export_required",
+        }] if ti_catalog_url else []),
         "candidates": candidates,
     }

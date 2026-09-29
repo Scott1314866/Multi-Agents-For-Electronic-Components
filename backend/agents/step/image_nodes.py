@@ -47,6 +47,7 @@ from backend.agents.step.cad_utils import (
 from backend.agents.step.reference_search import (
     extract_manufacturer_names,
     extract_product_identifiers,
+    extract_explicit_package_code,
     search_public_step_candidates,
 )
 from backend.agents.step.prompts import (
@@ -1794,6 +1795,9 @@ async def validate_dimension_chain_node(state: dict[str, Any]) -> dict[str, Any]
     """
     try:
         fused = FusedEvidence.model_validate(state["fused_evidence"])
+        # Human-supplied values may complete deterministic size chains (for
+        # example, an explicit pin count plus the drawing's terminal pitch).
+        fused = derive_family_parameters(fused)
         values = {item.canonical_name: item.value for item in fused.parameters}
         conflicts: list[str] = []
         checked_relationships = 0
@@ -1835,6 +1839,13 @@ async def validate_dimension_chain_node(state: dict[str, Any]) -> dict[str, Any]
             expected_height = values["housing_height"] + values["body_standoff"]
             if abs(expected_height - values["total_height"]) > 0.05:
                 conflicts.append("total_height!=housing_height+body_standoff")
+            if {"body_length", "terminal_width"}.issubset(values):
+                checked_relationships += 1
+                # End leads occupy row_span plus one lead width along X. A
+                # shorter body length usually means the two top-view axes were
+                # confused during extraction; ask for the drawing dimension.
+                if values["body_length"] + 0.05 < values["pin_span"] + values["terminal_width"]:
+                    conflicts.append("body_length<pin_span+terminal_width")
         quad_required = {
             "nominal_pin_count", "terminal_pitch", "terminal_span",
             "total_height", "housing_height", "body_standoff",
@@ -1903,6 +1914,10 @@ async def validate_dimension_chain_node(state: dict[str, Any]) -> dict[str, Any]
         payload["conflicting_fields"] = sorted(set([
             *payload.get("conflicting_fields", []), *conflicts
         ]))
+        artifacts = dict(state.get("artifact_paths", {}))
+        artifacts["fused_evidence"] = _write_json(
+            Path(state["output_dir"]) / "fused_evidence.json", payload
+        )
         result = {
             "passed": not conflicts,
             "conflicts": conflicts,
@@ -1914,6 +1929,7 @@ async def validate_dimension_chain_node(state: dict[str, Any]) -> dict[str, Any]
         return {
             "fused_evidence": payload,
             "dimension_chain_result": result,
+            "artifact_paths": artifacts,
             "status": "dimension_chain_validated",
         }
     except Exception as exc:
@@ -2014,6 +2030,21 @@ async def create_feature_ir_node(state: dict[str, Any]) -> dict[str, Any]:
             state["fused_evidence"],
             source_image_sha256=state["image_meta"]["sha256"],
         )
+        manual_parameters = {
+            item["canonical_name"]: {"value": item["value"], "unit": item["unit"],
+                                     "evidence_ids": item["evidence_ids"]}
+            for item in state["fused_evidence"].get("parameters", [])
+            if item.get("evidence_kind") == "human_input"
+        }
+        if manual_parameters:
+            feature_ir = {
+                **feature_ir,
+                "human_supplied_parameters": manual_parameters,
+                "assumptions": [
+                    *(feature_ir.get("assumptions") or []),
+                    "部分建模尺寸由操作员明确提供，已保留 human_input 来源并需人工审核。",
+                ],
+            }
         path = Path(state["output_dir"]) / "feature_ir.json"
         artifacts = dict(state.get("artifact_paths", {}))
         artifacts["feature_ir"] = _write_json(path, feature_ir)
@@ -2103,26 +2134,32 @@ async def search_reference_step_node(state: dict[str, Any]) -> dict[str, Any]:
     失败状态:
         网络不可用或无公开直链均视为可回退状态，继续图纸证据链。
     """
-    identifiers = extract_product_identifiers(state.get("all_ocr_tokens", []))
+    search_tokens = list(state.get("all_ocr_tokens", []))
+    identifiers = extract_product_identifiers(search_tokens)
     if not identifiers:
         # Jev 输入文字来自同一批 confidence>=0.80 的 OCR token。部分长链运行中
         # 全量 token 可能未保留到检索节点，此处只复用已审计文字，不生成料号。
         identity_texts = state.get("jev_decision", {}).get(
             "input_state", {}
         ).get("drawing_text", [])
-        identifiers = extract_product_identifiers([
+        fallback_tokens = [
             {
                 "text": text,
                 "confidence": 1.0,
                 "bbox": [0, index, 0, index],
             }
             for index, text in enumerate(identity_texts)
-        ])
-    manufacturers = extract_manufacturer_names(state.get("all_ocr_tokens", []))
+        ]
+        search_tokens.extend(fallback_tokens)
+        identifiers = extract_product_identifiers(fallback_tokens)
+    manufacturers = extract_manufacturer_names(search_tokens)
     package_type = str(
         state.get("jev_decision", {}).get("input_state", {}).get("package_type")
         or state.get("view_classification", {}).get("package_type")
         or ""
+    )
+    package_code = extract_explicit_package_code(
+        search_tokens, manufacturers, package_type
     )
     output_dir = Path(state["output_dir"])
     report = await search_public_step_candidates(
@@ -2130,6 +2167,7 @@ async def search_reference_step_node(state: dict[str, Any]) -> dict[str, Any]:
         package_type=package_type,
         output_dir=output_dir,
         manufacturers=manufacturers,
+        package_code=package_code,
     )
     exact_candidates = [
         candidate
@@ -2756,7 +2794,7 @@ def route_continue_or_failed(state: dict[str, Any]) -> str:
 
 
 def route_after_dimension_gate(state: dict[str, Any]) -> str:
-    """尺寸门禁路由：证据不足时安全停止。"""
+    """尺寸门禁路由：先复核视觉绑定，再询问操作员补齐可填写参数。"""
     gate = state.get("dimension_gate", {})
     if gate.get("passed"):
         return "continue"
@@ -2764,9 +2802,20 @@ def route_after_dimension_gate(state: dict[str, Any]) -> str:
         return "follow_up"
     if gate.get("status") == "stopped_unsupported_template":
         return "unsupported"
+    from backend.agents.step.human_nodes import actionable_dimension_fields
+    # A detected numeric relationship conflict is actionable: send only its
+    # participating slots to the operator before any visual review/stop path.
+    if gate.get("conflicting_fields") and actionable_dimension_fields(state, conflicts_only=True):
+        return "human"
     from backend.agents.step.semantic_review_nodes import semantic_review_regions
     if semantic_review_regions(state):
         return "review"
+    # A human supplied value can be syntactically valid yet conflict with the
+    # drawing evidence. Keep the job resumable so the operator can correct it;
+    # each retry is checkpointed at ask_missing_dimensions and requires an
+    # explicit answer (or cancellation), so this does not create an auto-loop.
+    if actionable_dimension_fields(state):
+        return "human"
     return "stop"
 
 

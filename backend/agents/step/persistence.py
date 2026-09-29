@@ -78,6 +78,20 @@ async def invoke_postgres_step_graph(
         return await graph.ainvoke(input_state, config=config)
 
 
+async def resume_postgres_step_graph_at_node(
+    mode: str,
+    step_drawing_id: str | UUID,
+    updates: dict[str, Any],
+    *,
+    as_node: str,
+) -> Any:
+    """Resume an existing thread from a checkpointed node with audited updates."""
+    config = step_checkpoint_config(mode, step_drawing_id)
+    async with open_postgres_step_graph(mode) as graph:
+        await graph.aupdate_state(config, updates, as_node=as_node)
+        return await graph.ainvoke(None, config=config)
+
+
 def serialize_step_snapshot(snapshot: Any) -> dict[str, Any]:
     """Expose stable checkpoint metadata without leaking LangGraph objects.
 

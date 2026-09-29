@@ -11,6 +11,7 @@ from backend.agents.step.vision.schemas import (
     FusedParameter,
     QwenViewSemanticResult,
     SemanticAssignment,
+    parameter_has_traceable_source,
 )
 
 
@@ -204,7 +205,7 @@ def plan_from_evidence(
             continue
         item = indexed[name]
         expected_unit = "count" if name == "nominal_pin_count" else "mm"
-        if item.unit != expected_unit or not item.evidence_ids or not item.token_bboxes:
+        if item.unit != expected_unit or not parameter_has_traceable_source(item):
             raise ValueError(f"QFN/UFQFPN 参数证据或单位无效：{name}")
 
     count_value = indexed["nominal_pin_count"].value

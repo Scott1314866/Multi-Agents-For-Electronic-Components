@@ -39,7 +39,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--username", default=os.getenv("STEP_USERNAME"))
     parser.add_argument("--timeout", type=float, default=float(os.getenv("STEP_POLL_TIMEOUT", "900")))
     parser.add_argument("--interval", type=float, default=float(os.getenv("STEP_POLL_INTERVAL", "3")))
-    parser.add_argument("--interactive", action="store_true", help="由终端使用者逐次输入真实 answer JSON")
+    parser.add_argument("--interactive", action="store_true", help="在终端用自然语言回答任务中的问题")
     args = parser.parse_args(argv)
     if not args.drawing_id and not args.image:
         args.image = os.getenv("STEP_IMAGE_PATH")
@@ -101,7 +101,11 @@ def check_persisted_state(job: dict, db_job: dict, snapshot: dict, checkpoint_co
             raise RuntimeError("API 显示暂停，但 checkpoint 中无对应待答 interrupt/待执行节点。")
         if matched[0]["value"].get("stage") != pending.get("stage"):
             raise RuntimeError("checkpoint 与 API 的人工阶段不一致。")
-        expected_stages = {"review"} if job["status"] == "pending_review" else {"package", "routing"}
+        expected_stages = (
+            {"review"}
+            if job["status"] == "pending_review"
+            else {"package", "routing", "dimensions"}
+        )
         if pending.get("stage") not in expected_stages:
             raise RuntimeError("待答阶段与 API 暂停状态不一致。")
         needs_review = job["status"] == "pending_review"
@@ -147,24 +151,62 @@ async def verify_persisted_job(drawing_id: str, job: dict) -> tuple[int, dict]:
 
 
 def prompt_answer(pending: dict) -> dict | None:
-    """只接受实际使用者输入，不给任何阶段预设答案。"""
-    print(json.dumps(pending, ensure_ascii=False, indent=2))
+    """Prompt in ordinary language and adapt the answer to the internal API shape."""
+    stage = pending.get("stage", "unknown")
+    print(f"\n需要你补充信息：{pending.get('question') or stage}")
+    fields = pending.get("fields") or {}
+    if stage == "dimensions":
+        print("请直接填写参数名和数值，例如：housing_height=1.2 mm。多个参数用分号隔开。")
+        for name, spec in fields.items():
+            print(f"  - {spec.get('description', name)} ({name}, {spec.get('unit', 'mm')})")
+    elif stage == "package":
+        print("输入封装名称（如 SOP8），或输入“自动识别”；空行保留暂停。")
+    elif stage == "routing":
+        candidates = [item.get("family_id") for item in pending.get("candidates", []) if item.get("implemented")]
+        if candidates:
+            print("可改选已实现模板：" + "、".join(candidates))
+        print("输入“确认”采用建议，输入模板编号改选，或输入“取消”；空行保留暂停。")
+    elif stage == "review":
+        print("输入“批准”完成审核，或输入“拒绝”；空行保留暂停。")
     while True:
         try:
-            raw = input("输入 answer JSON（空行保留暂停）: ").strip()
+            raw = input("你的回答：").strip()
         except (EOFError, KeyboardInterrupt):
             return None
         if not raw:
             return None
-        try:
-            answer = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            print(f"JSON 格式有误：{exc.msg}")
+        normalized = raw.strip().casefold()
+        if normalized in {"取消", "取消任务", "停止", "cancel", "退出"}:
+            return {"action": "cancel"}
+        if stage == "package":
+            if normalized in {"自动", "自动识别", "auto", "不确定"}:
+                return {"action": "auto"}
+            return {"action": "provide", "package_type": raw}
+        if stage == "dimensions":
+            return {"text": raw}
+        if stage == "routing":
+            if normalized in {"确认", "使用建议", "confirm", "yes"}:
+                if "confirm" in pending.get("options", []):
+                    return {"action": "confirm"}
+                print("当前没有可确认的建议模板，请改选一个已实现的模板或取消。")
+                continue
+            candidates = {
+                item.get("family_id") for item in pending.get("candidates", [])
+                if item.get("implemented")
+            }
+            if raw in candidates:
+                return {"action": "change", "family_id": raw}
+            print("请输入“确认”、一个已实现的模板编号，或“取消”。")
             continue
-        if not isinstance(answer, dict) or not isinstance(answer.get("action"), str):
-            print('需要 JSON 对象及 action 字段，例如 {"action":"auto"}（仅封装阶段适用）。')
+        if stage == "review":
+            if normalized in {"批准", "通过", "approve", "yes"}:
+                return {"action": "approve"}
+            if normalized in {"拒绝", "不通过", "reject", "no"}:
+                return {"action": "reject"}
+            print("请输入“批准”或“拒绝”。")
             continue
-        return answer
+        print(f"暂不支持的人工问题阶段：{stage}")
+        return None
 
 
 def require_response(response: httpx.Response, expected: int, action: str) -> dict:
@@ -263,6 +305,20 @@ def run(args: argparse.Namespace) -> int:
                     print(f"回答未接受，请按问题要求重新输入：{response.text[:2000]}")
                     continue
                 require_response(response, 202, "提交人工回答")
+            elif current_status == "failed":
+                print(f"执行失败：{job.get('error_msg') or '未提供错误详情'}")
+                if args.interactive:
+                    try:
+                        retry = input("是否在原任务上重试？输入 y 重试，其他输入结束：").strip().casefold()
+                    except (EOFError, KeyboardInterrupt):
+                        retry = ""
+                    if retry in {"y", "yes", "是", "重试"}:
+                        retried = client.post(f"{status_url}/retry", headers=headers)
+                        require_response(retried, 202, "重试任务")
+                        print("已提交重试，继续轮询同一 drawing_id。")
+                        last_status = None
+                        continue
+                return 1
             elif current_status in STOPPED_STATUSES or current_status.startswith("stopped_"):
                 print(f"任务未完成生成：{current_status}；{job.get('error_msg') or ''}")
                 return 1
