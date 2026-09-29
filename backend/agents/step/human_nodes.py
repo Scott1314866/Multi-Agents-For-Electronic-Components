@@ -26,7 +26,6 @@ from backend.agents.step.dimension_input import (
 
 
 MIN_ROUTING_CONFIDENCE = 0.80
-MAX_HUMAN_DIMENSION_ROUNDS = 3
 _IDENTITY_FIELDS = {
     "family_id", "category_id", "subcategory_id", "package_type",
     "resistor_or_capacitor", "supported_family",
@@ -145,6 +144,34 @@ def _cancelled(state: dict, stage: str, answer: dict) -> dict:
 
 async def ask_package_node(state: dict[str, Any]) -> dict[str, Any]:
     """开始时询问封装；用户可以明确选择由 Agent 自行识别。"""
+    # The public input adapter always supplies a natural-language request. In
+    # that path, let the image evidence and JEV route determine the package;
+    # asking for an internal package label here would defeat the adapter.
+    human_request = str(state.get("human_request") or "").strip()
+    if human_request:
+        import re
+
+        package_hint = ""
+        match = re.search(
+            r"(?i)\b(?:SOP|SOIC|SSOP|TSSOP|QSOP|MSOP|QFN|DFN|LQFP|TQFP|BGA|DIP|SOT)[- ]?\d{1,3}\b",
+            human_request,
+        )
+        if match:
+            package_hint = re.sub(r"\s+", "", match.group(0)).upper()
+        return {
+            "human_package": {
+                "action": "auto",
+                "package_type": package_hint,
+                "source": "natural_language_request",
+            },
+            "package_type_hint": package_hint,
+            "human_history": _history(state, "package", {
+                "action": "auto",
+                "source": "natural_language_request",
+                "package_type": package_hint,
+            }),
+            "status": "package_auto_detect",
+        }
     answer = _ask({
         "stage": "package",
         "question": "这张工程图需要生成什么封装？请填写封装名称；不确定可选择自动识别。",
@@ -339,6 +366,33 @@ def _store_operator_dimensions(
     }
 
 
+_CONFLICT_FIELD_HINTS = {
+    "pin_span": "请核对同一排引脚最外侧两只引脚的中心距。",
+    "terminal_pitch": "请核对相邻引脚中心之间的间距。",
+    "nominal_pin_count": "请核对器件引脚总数；每侧引脚数由总数和封装布局决定。",
+    "total_height": "请核对从引脚落地面到封装顶部的总高度。",
+    "housing_height": "请核对塑封本体自身的高度。",
+    "body_standoff": "请核对引脚落地面到塑封本体底面的距离。",
+    "body_length": "请核对沿同一排引脚排列方向的塑封本体长度。",
+    "terminal_width": "请核对单只引脚沿排列方向的宽度。",
+}
+
+
+def _dimension_conflict_details(state: dict[str, Any]) -> list[str]:
+    conflicts = [str(item) for item in (state.get("dimension_gate") or {}).get("conflicting_fields", [])]
+    details: list[str] = []
+    for conflict in conflicts:
+        if "pin_span" in conflict and "pitch" in conflict:
+            details.append("引脚中心距关系不一致：最外侧引脚中心距应等于（每侧引脚数 - 1）× 相邻引脚间距。")
+        elif "total_height" in conflict and "housing_height" in conflict:
+            details.append("高度关系不一致：总体高度应等于塑封本体高度 + 本体离板高度。")
+        elif "body_length" in conflict and "pin_span" in conflict:
+            details.append("本体长度与引脚排列不匹配：本体长度应能容纳同排首末引脚中心距及一只引脚的宽度；请核对俯视图顶部的本体长度标注。")
+        else:
+            details.append(f"参数关系不一致：{conflict}。请重新核对相关尺寸。")
+    return list(dict.fromkeys(details))
+
+
 def _dimension_question(state: dict[str, Any], fields: list[str], question_id: str) -> dict[str, Any]:
     from backend.agents.step.families.registry import image_family_catalog
 
@@ -360,6 +414,7 @@ def _dimension_question(state: dict[str, Any], fields: list[str], question_id: s
                 "图纸未能唯一识别该参数" if field in (state.get("dimension_gate") or {}).get("missing_fields", [])
                 else "图纸中的候选值存在冲突或置信度不足"
             ),
+            "conflict_explanation": _CONFLICT_FIELD_HINTS.get(field, "请核对这个尺寸，并填写确认后的数值。"),
             "observed_candidates": existing.get(field, []),
         }
         for field in fields
@@ -374,11 +429,14 @@ def _dimension_question(state: dict[str, Any], fields: list[str], question_id: s
         "stage": "dimensions",
         "question_id": question_id,
         "question": (
-            "尺寸门禁发现以下参数缺失、冲突或置信度不足。请按参数名填写数值；"
-            "长度默认 mm，也可注明 mm/cm/um/mil/inch；引脚数填整数。"
+            "尺寸之间存在冲突。请只核对下面列出的相关项目并重新填写；"
+            "长度单位默认 mm，引脚数填写整数。"
+            if (state.get("dimension_gate") or {}).get("conflicting_fields") else
+            "尺寸门禁发现参数缺失或置信度不足。请填写下面需要补充的项目；长度单位默认 mm，引脚数填写整数。"
         ),
         "options": ["provide", "cancel"],
         "fields": field_specs,
+        "conflict_details": _dimension_conflict_details(state),
         "intent": "fill_missing_or_resolve_conflicting_dimension_slots",
         "examples": [
             "本体高度=1.2 mm；引脚厚度=0.15 mm",
@@ -388,7 +446,7 @@ def _dimension_question(state: dict[str, Any], fields: list[str], question_id: s
     }
 
 
-def actionable_dimension_fields(state: dict[str, Any]) -> list[str]:
+def actionable_dimension_fields(state: dict[str, Any], *, conflicts_only: bool = False) -> list[str]:
     """Map gate fields and relationship conflicts back to real family slots."""
     from backend.agents.step.families.registry import image_family_catalog
 
@@ -396,9 +454,8 @@ def actionable_dimension_fields(state: dict[str, Any]) -> list[str]:
     contract = image_family_catalog().get(fused.get("family_id"), {})
     allowed = set(contract.get("required_parameters", []))
     gate = state.get("dimension_gate") or {}
-    raw = [
-        *gate.get("missing_fields", []),
-        *gate.get("conflicting_fields", []),
+    raw = list(gate.get("conflicting_fields", [])) if conflicts_only else [
+        *gate.get("missing_fields", []), *gate.get("conflicting_fields", []),
         *gate.get("low_confidence_fields", []),
     ]
     fields: set[str] = set()
@@ -411,6 +468,11 @@ def actionable_dimension_fields(state: dict[str, Any]) -> list[str]:
             continue
         # A deterministic chain violation is a relationship, not a slot name.
         fields.update(field for field in allowed if re.search(rf"(?<![\w]){re.escape(field)}(?![\w])", name))
+        # Relationship aliases are not canonical parameter names.
+        if "pin_span" in name and "pitch" in name:
+            fields.update(field for field in ("pin_span", "terminal_pitch", "nominal_pin_count") if field in allowed)
+        if "total_height" in name and "housing_height" in name:
+            fields.update(field for field in ("total_height", "housing_height", "body_standoff") if field in allowed)
     return sorted(fields)
 
 
@@ -448,7 +510,9 @@ async def ask_missing_dimensions_node(state: dict[str, Any]) -> dict[str, Any]:
         conflicts = sorted(set([*gate.get("conflicting_fields", []), "nominal_pin_count"]))
         gate = {**gate, "conflicting_fields": conflicts}
         state = {**state, "dimension_gate": gate}
-    fields = actionable_dimension_fields(state)
+    fields = actionable_dimension_fields(
+        state, conflicts_only=bool(gate.get("conflicting_fields"))
+    )
     if not fields:
         updates: dict[str, Any] = {"status": "dimensions_supplied", "fused_evidence": fused}
         history = state.get("human_dimension_history", [])

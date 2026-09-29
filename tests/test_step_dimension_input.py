@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -8,7 +9,9 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
 from backend.agents.step import human_nodes
+from backend.agents.step.graph import build_image_to_step_graph
 from backend.agents.step.human_nodes import validate_human_answer
+from backend.agents.step.persistence import serialize_step_snapshot
 from backend.api.v1 import step as step_api
 from backend.agents.step.dimension_input import (
     parse_dimension_answer,
@@ -144,6 +147,116 @@ def test_operator_update_invalidates_old_derived_slots_before_recalculation():
         item["canonical_name"] != "pin_span"
         for item in update["fused_evidence"]["parameters"]
     )
+
+
+def test_relationship_conflict_maps_to_all_operator_slots():
+    fused = FusedEvidence(family_id="ic/gullwing_ic", package_type="TSSOP-16")
+    state = {
+        "fused_evidence": fused.model_dump(),
+        "dimension_gate": {
+            "missing_fields": ["terminal_thickness"],
+            "conflicting_fields": [
+                "pin_span!=pitch*(pins_per_side-1)",
+                "total_height!=housing_height+body_standoff",
+            ],
+            "low_confidence_fields": [],
+        },
+    }
+    assert human_nodes.actionable_dimension_fields(state, conflicts_only=True) == [
+        "body_standoff", "housing_height", "nominal_pin_count", "pin_span",
+        "terminal_pitch", "total_height",
+    ]
+    request = human_nodes._dimension_question(state, human_nodes.actionable_dimension_fields(state, conflicts_only=True), "q")
+    assert len(request["conflict_details"]) == 2
+    assert "引脚中心距关系不一致" in request["conflict_details"][0]
+
+
+def test_conflict_routes_to_human_before_visual_review(monkeypatch):
+    monkeypatch.setattr(
+        "backend.agents.step.semantic_review_nodes.semantic_review_regions",
+        lambda _state: True,
+    )
+    state = {
+        "fused_evidence": FusedEvidence(family_id="ic/gullwing_ic", package_type="TSSOP-16").model_dump(),
+        "dimension_gate": {
+            "passed": False,
+            "conflicting_fields": ["total_height!=housing_height+body_standoff"],
+            "missing_fields": [], "low_confidence_fields": [],
+        },
+    }
+    assert route_after_dimension_gate(state) == "human"
+
+
+def test_failed_geometry_retry_reuses_thread_and_asks_only_related_dimensions():
+    snapshot = {
+        "values": {
+            "status": "failed",
+            "verification": {"passed": False},
+            "fused_evidence": {
+                "family_id": "ic/gullwing_ic", "package_type": "TSSOP-16",
+                "parameters": [
+                    {"canonical_name": "body_length", "value": 4.5},
+                    {"canonical_name": "pin_span", "value": 4.55},
+                    {"canonical_name": "terminal_width", "value": 0.3},
+                ],
+            },
+        },
+        "next_nodes": [], "interrupts": [],
+    }
+    relationship = step_api._failed_dimension_relationship(snapshot)
+    assert relationship == "body_length<pin_span+terminal_width"
+
+    async def run():
+        graph = build_image_to_step_graph(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "failed-geometry-original-thread"}}
+        await graph.aupdate_state(config, {
+            "status": "failed", "fused_evidence": snapshot["values"]["fused_evidence"],
+            "human_history": [{"stage": "dimensions", "values": {"overall_width": 6.4}}],
+        }, as_node="failed")
+        await graph.aupdate_state(config, {
+            "status": "dimensions_need_confirmation", "errors": [], "result": {},
+            "dimension_gate": {"passed": False, "conflicting_fields": [relationship],
+                               "missing_fields": [], "low_confidence_fields": []},
+        }, as_node="validate_dimensions")
+        await graph.ainvoke(None, config)
+        resumed = serialize_step_snapshot(await graph.aget_state(config))
+        assert resumed["next_nodes"] == ["ask_missing_dimensions"]
+        assert resumed["interrupts"][0]["value"]["stage"] == "dimensions"
+        assert set(resumed["interrupts"][0]["value"]["fields"]) == {
+            "body_length", "pin_span", "terminal_width",
+        }
+        assert len(resumed["values"]["human_history"]) == 1
+
+    asyncio.run(run())
+
+
+def test_gullwing_chain_catches_swapped_body_length_before_step_verification(tmp_path):
+    from backend.agents.step.image_nodes import validate_dimension_chain_node
+
+    dimensions = {
+        "nominal_pin_count": (16, "count"), "terminal_pitch": (0.65, "mm"),
+        "pin_span": (4.55, "mm"), "total_height": (1.2, "mm"),
+        "housing_height": (1.05, "mm"), "body_standoff": (0.15, "mm"),
+        "overall_width": (6.4, "mm"), "body_width": (4.4, "mm"),
+        "body_length": (4.5, "mm"), "terminal_width": (0.3, "mm"),
+    }
+
+    def state_for(body_length):
+        values = {**dimensions, "body_length": (body_length, "mm")}
+        fused = FusedEvidence(
+            family_id="ic/gullwing_ic", package_type="TSSOP-16",
+            parameters=[FusedParameter(
+                canonical_name=name, value=value, unit=unit,
+                evidence_ids=[f"human_input:q:{name}"], target_feature="operator_confirmed",
+                evidence_kind="human_input", ocr_confidence=0.0, semantic_confidence=0.0,
+            ) for name, (value, unit) in values.items()],
+        )
+        return {"fused_evidence": fused.model_dump(), "output_dir": str(tmp_path)}
+
+    bad = asyncio.run(validate_dimension_chain_node(state_for(4.5)))
+    assert "body_length<pin_span+terminal_width" in bad["dimension_chain_result"]["conflicts"]
+    corrected = asyncio.run(validate_dimension_chain_node(state_for(5.0)))
+    assert "body_length<pin_span+terminal_width" not in corrected["dimension_chain_result"]["conflicts"]
 
 
 def test_human_input_passes_gate_as_operator_evidence_not_ocr_confidence():
@@ -291,4 +404,6 @@ def test_gate_routes_failed_supported_parameters_to_operator(monkeypatch):
         },
     }
     assert route_after_dimension_gate(state) == "human"
-    assert route_after_dimension_gate({**state, "human_dimension_rounds": 3}) == "stop"
+    # Human supplied values can still conflict with the drawing; keep the
+    # checkpoint open so the operator can correct them in a later round.
+    assert route_after_dimension_gate({**state, "human_dimension_rounds": 3}) == "human"

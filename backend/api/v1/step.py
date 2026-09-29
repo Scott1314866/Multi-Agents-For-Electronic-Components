@@ -6,10 +6,11 @@ import asyncio
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import shutil
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, Field
@@ -20,6 +21,7 @@ from backend.agents.step.persistence import (
     get_postgres_step_snapshot,
     invoke_postgres_step_graph,
     open_postgres_step_job_lock,
+    resume_postgres_step_graph_at_node,
 )
 from backend.core.logger import get_logger
 from backend.dependencies import AsyncSessionLocal, get_current_user
@@ -31,6 +33,7 @@ logger = get_logger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 STEP_JOB_ROOT = PROJECT_ROOT / "output" / "step_agent"
 MAX_IMAGE_SIZE_BYTES = 25 * 1024 * 1024
+MAX_HUMAN_REQUEST_LENGTH = 2000
 ALLOWED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 PREVIEW_VIEWS = ("isometric", "front", "top", "right")
 _background_tasks: set[asyncio.Task] = set()
@@ -60,7 +63,7 @@ async def _update_job_failed(drawing_id: str, tenant_id: str, error: str) -> Non
                     needs_review = FALSE,
                     package_params = COALESCE(package_params, '{}'::jsonb)
                         || '{"pending_input": null, "projection_sync_failed": false,
-                             "worker_interrupted": false}'::jsonb,
+                             "worker_interrupted": false, "retryable": true}'::jsonb,
                     updated_at = NOW()
                 WHERE id = CAST(:id AS uuid) AND tenant_id = :tenant_id
             """),
@@ -198,8 +201,11 @@ async def _persist_job_snapshot(
     error = None
     if job_status == "failed":
         error = "; ".join(str(item) for item in state.get("errors", [])) or "STEP Agent 执行失败"
+        if error == "STEP Agent 执行失败" and (state.get("verification") or {}).get("passed") is False:
+            error = "STEP 几何校验未通过：模型外形与已识别尺寸不一致，可核对尺寸后在原任务上继续"
     package_params = {
         "mode": "image",
+        "human_request": state.get("human_request", ""),
         "original_filename": original_filename,
         "graph_status": state.get("status"),
         "result_status": result.get("status"),
@@ -228,6 +234,8 @@ async def _persist_job_snapshot(
         "projection_sync_failed": False,
         "projection_sync_error": None,
         "worker_interrupted": False,
+        "retryable": job_status == "failed",
+        "retry_from_checkpoint": False,
     }
     async with AsyncSessionLocal() as session:
         await session.execute(
@@ -315,6 +323,37 @@ def _package_params(row: dict) -> dict:
     return json.loads(params) if isinstance(params, str) else dict(params)
 
 
+def _restartable_source(row: dict) -> bool:
+    source = Path(row.get("source_image_path") or "").resolve()
+    job_root = (STEP_JOB_ROOT / str(row["id"])).resolve()
+    return source.is_relative_to(job_root) and source.is_file()
+
+
+def _failed_dimension_relationship(snapshot: dict) -> str | None:
+    """Identify a failed geometry check that can be repaired from saved evidence."""
+    state = snapshot.get("values") or {}
+    if snapshot.get("interrupts") or snapshot.get("next_nodes"):
+        return None
+    if state.get("status") != "failed" or (state.get("verification") or {}).get("passed") is not False:
+        return None
+    fused = state.get("fused_evidence") or {}
+    if fused.get("family_id") != "ic/gullwing_ic":
+        return None
+    values = {
+        item.get("canonical_name"): item.get("value")
+        for item in fused.get("parameters", []) if isinstance(item, dict)
+    }
+    try:
+        body_length = float(values["body_length"])
+        pin_span = float(values["pin_span"])
+        terminal_width = float(values["terminal_width"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if body_length + 0.05 < pin_span + terminal_width:
+        return "body_length<pin_span+terminal_width"
+    return None
+
+
 async def _sync_job_projection(
     drawing_id: str,
     tenant_id: str,
@@ -342,8 +381,10 @@ async def _run_owned_image_job(
     output_dir: Path,
     original_filename: str,
     *,
+    human_request: str,
     resume_input: dict | None,
     recovering: bool,
+    restart: bool,
 ) -> None:
     """Recheck durable state after acquiring ownership; never replay new input."""
     row = await _read_worker_job(drawing_id, tenant_id)
@@ -354,7 +395,56 @@ async def _run_owned_image_job(
         return
     original_filename = params.get("original_filename") or original_filename
     accepted = params.get("accepted_input")
-    if recovering or resume_input is not None or accepted:
+    if params.get("retry_from_checkpoint"):
+        try:
+            snapshot = await get_postgres_step_snapshot("image", drawing_id)
+        except Exception as exc:
+            await _mark_job_recoverable(
+                drawing_id, tenant_id, f"重试时无法读取 checkpoint：{exc}",
+                projection_failed=True,
+            )
+            return
+        if snapshot.get("interrupts"):
+            await _sync_job_projection(drawing_id, tenant_id, original_filename, snapshot)
+            return
+        if snapshot.get("next_nodes"):
+            graph_input = None
+        elif relationship := _failed_dimension_relationship(snapshot):
+            gate = dict((snapshot.get("values") or {}).get("dimension_gate") or {})
+            gate.update({
+                "passed": False,
+                "status": "dimensions_need_confirmation",
+                "missing_fields": [],
+                "conflicting_fields": [relationship],
+                "low_confidence_fields": [],
+            })
+            try:
+                await resume_postgres_step_graph_at_node(
+                    "image", drawing_id,
+                    {"dimension_gate": gate, "status": "dimensions_need_confirmation",
+                     "errors": [], "result": {}, "verification": {}},
+                    as_node="validate_dimensions",
+                )
+            except Exception as exc:
+                logger.error("step.checkpoint_retry_failed", drawing_id=drawing_id, exc_info=True)
+                await _update_job_failed(drawing_id, tenant_id, str(exc))
+                return
+            await _sync_job_projection(drawing_id, tenant_id, original_filename)
+            return
+        else:
+            graph_input = {
+                "task": "generate_step", "mode": "image", "image_path": str(image_path),
+                "output_dir": str(output_dir), "human_request": human_request,
+            }
+    elif restart:
+        graph_input = {
+            "task": "generate_step",
+            "mode": "image",
+            "image_path": str(image_path),
+            "output_dir": str(output_dir),
+            "human_request": human_request,
+        }
+    elif recovering or resume_input is not None or accepted:
         try:
             snapshot = await get_postgres_step_snapshot("image", drawing_id)
         except Exception as exc:
@@ -383,7 +473,13 @@ async def _run_owned_image_job(
             # dictionary here would restart the graph and repeat human stages.
             graph_input = None
     else:
-        graph_input = {"image_path": str(image_path), "output_dir": str(output_dir)}
+        graph_input = {
+            "task": "generate_step",
+            "mode": "image",
+            "image_path": str(image_path),
+            "output_dir": str(output_dir),
+            "human_request": human_request,
+        }
 
     try:
         await invoke_postgres_step_graph("image", drawing_id, graph_input)
@@ -401,8 +497,10 @@ async def _run_image_job(
     output_dir: Path,
     original_filename: str,
     *,
+    human_request: str = "",
     resume_input: dict | None = None,
     recovering: bool = False,
+    restart: bool = False,
 ) -> None:
     """Own one job across processes and persist interrupted/recoverable states."""
     try:
@@ -413,7 +511,9 @@ async def _run_image_job(
             try:
                 await _run_owned_image_job(
                     drawing_id, tenant_id, image_path, output_dir, original_filename,
+                    human_request=human_request,
                     resume_input=resume_input, recovering=recovering,
+                    restart=restart,
                 )
             except asyncio.CancelledError:
                 # Record interruption before releasing ownership so a recovering
@@ -462,6 +562,7 @@ async def recover_step_jobs() -> int:
             Path(row["source_image_path"] or ""),
             (STEP_JOB_ROOT / drawing_id / "artifacts").resolve(),
             params.get("original_filename", "drawing"),
+            human_request=params.get("human_request", ""),
             recovering=True,
         ))
         _background_tasks.add(task)
@@ -481,12 +582,13 @@ def _discard_background_task(task: asyncio.Task) -> None:
         logger.error("step.background_task_unhandled", error=str(exception))
 
 
-@router.post("/drawings", status_code=status.HTTP_202_ACCEPTED)
-async def submit_step_drawing(
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user),
-):
-    """Upload an engineering drawing and start asynchronous STEP generation."""
+async def _submit_image_job(file: UploadFile, message: str, current_user: dict) -> dict:
+    """Adapt user-facing form fields into the private image-agent state."""
+    message = message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="请描述你希望生成的元器件模型")
+    if len(message) > MAX_HUMAN_REQUEST_LENGTH:
+        raise HTTPException(status_code=400, detail="需求描述不能超过 2000 个字符")
     original_filename = Path(file.filename or "drawing").name
     suffix = Path(original_filename).suffix.lower()
     if suffix not in ALLOWED_IMAGE_SUFFIXES:
@@ -532,7 +634,11 @@ async def submit_step_drawing(
                     "package_params": json.dumps(
                         {
                             "mode": "image",
+                            "task": "generate_step",
+                            "human_request": message,
                             "original_filename": original_filename,
+                            "retry_count": 0,
+                            "retryable": False,
                         },
                         ensure_ascii=False,
                     ),
@@ -550,6 +656,7 @@ async def submit_step_drawing(
             image_path.resolve(),
             output_dir.resolve(),
             original_filename,
+            human_request=message,
         )
     )
     _background_tasks.add(task)
@@ -560,6 +667,32 @@ async def submit_step_drawing(
         "status": "ai_processing",
         "status_url": f"/api/v1/step/drawings/{drawing_id}",
     }
+
+
+@router.post("/generate", status_code=status.HTTP_202_ACCEPTED)
+async def generate_step_from_user_input(
+    message: str = Form(..., min_length=1, max_length=MAX_HUMAN_REQUEST_LENGTH),
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """Public input adapter: users provide plain language and an image, never Agent JSON."""
+    return await _submit_image_job(file, message, current_user)
+
+
+@router.post("/drawings", status_code=status.HTTP_202_ACCEPTED, include_in_schema=False)
+async def submit_step_drawing_compat(
+    file: UploadFile = File(...),
+    message: str = Form("生成这张工程图对应的 STEP 模型"),
+    current_user: dict = Depends(get_current_user),
+):
+    """Backward-compatible upload endpoint; new clients should use /generate."""
+    return await _submit_image_job(file, message, current_user)
+
+
+@router.get("/ui", include_in_schema=False)
+async def step_generation_ui():
+    """Serve the minimal natural-language upload page."""
+    return FileResponse(Path(__file__).with_name("step_ui.html"), media_type="text/html")
 
 
 @router.get("/drawings/{drawing_id}")
@@ -582,6 +715,7 @@ async def get_step_drawing(
         row = result.mappings().fetchone()
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="STEP 任务不存在")
+    params = _package_params(dict(row))
 
     # Read checkpoints only after the tenant-scoped ownership query succeeds.
     checkpoint_error = None
@@ -599,9 +733,19 @@ async def get_step_drawing(
         logger.error("step.checkpoint_read_failed", drawing_id=str(drawing_id), exc_info=True)
         snapshot, pending, checkpoint_available = {}, None, False
         checkpoint_error = f"检查点暂时不可读取（{type(exc).__name__}）"
+    repairable_relationship = (
+        _failed_dimension_relationship(snapshot) if row["status"] == "failed" else None
+    )
+    error_msg = row["error_msg"]
+    if repairable_relationship and (not error_msg or error_msg == "STEP Agent 执行失败"):
+        error_msg = "模型外形校验发现塑封本体长度与引脚排列尺寸不匹配；可以在原任务中核对后继续"
     return {
         "drawing_id": str(row["id"]),
         "status": row["status"],
+        "restartable": (
+            row["status"] == "stopped"
+            and _restartable_source(dict(row))
+        ),
         "step_file_url": (
             f"/api/v1/step/drawings/{drawing_id}/artifacts/step"
             if row["output_path"] else None
@@ -610,8 +754,17 @@ async def get_step_drawing(
             f"/api/v1/step/drawings/{drawing_id}/artifacts/preview"
             if row["preview_path"] else None
         ),
-        "result": row["package_params"] or {},
-        "error_msg": row["error_msg"],
+        "result": params,
+        "error_msg": error_msg,
+        "stop_reason": {
+            "graph_status": params.get("graph_status"),
+            "result_status": params.get("result_status"),
+            "evidence_report": params.get("evidence_report"),
+            "missing_fields": params.get("missing_fields", []),
+            "conflicting_fields": params.get("conflicting_fields", []),
+        } if row["status"] == "stopped" else None,
+        "retryable": bool(params.get("retryable", row["status"] == "failed")),
+        "retry_strategy": "continue_from_dimensions" if repairable_relationship else "rerun_from_image",
         "needs_review": row["needs_review"],
         "preview_urls": _preview_urls(drawing_id, row),
         "pending_input": _public_pending_input(pending, drawing_id, row),
@@ -626,6 +779,144 @@ async def get_step_drawing(
         "reviewed_at": row["reviewed_at"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+    }
+
+
+@router.post("/drawings/{drawing_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+async def retry_failed_step_drawing(
+    drawing_id: uuid.UUID,
+    current_user: dict = Depends(get_current_user),
+):
+    """Restart a failed generation from its saved image and request, keeping the job ID."""
+    tenant_id = str(current_user["tenant_id"])
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            result = await session.execute(text("""
+                SELECT id, status, source_image_path, package_params
+                FROM step_drawings
+                WHERE id = :id AND tenant_id = :tenant_id
+                FOR UPDATE
+            """), {"id": drawing_id, "tenant_id": tenant_id})
+            row = result.mappings().fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="STEP 任务不存在")
+            if row["status"] != "failed":
+                raise HTTPException(status_code=409, detail="只有执行失败的任务可以重试")
+            image_path = Path(row["source_image_path"] or "").resolve()
+            job_root = (STEP_JOB_ROOT / str(drawing_id)).resolve()
+            if not image_path.is_relative_to(job_root) or not image_path.is_file():
+                raise HTTPException(status_code=409, detail="原始图纸文件不可用，无法重试")
+            params = _package_params(dict(row))
+            retry_count = int(params.get("retry_count", 0)) + 1
+            await session.execute(text("""
+                UPDATE step_drawings
+                SET status = 'ai_processing', error_msg = NULL, needs_review = FALSE,
+                    package_params = COALESCE(package_params, '{}'::jsonb)
+                        || CAST(:retry_update AS jsonb),
+                    updated_at = NOW()
+                WHERE id = :id AND tenant_id = :tenant_id
+            """), {
+                "id": drawing_id,
+                "tenant_id": tenant_id,
+                "retry_update": json.dumps({
+                    "retryable": False,
+                    "retry_from_checkpoint": True,
+                    "retry_count": retry_count,
+                    "pending_input": None,
+                    "accepted_input": None,
+                    "projection_sync_failed": False,
+                    "worker_interrupted": False,
+                }, ensure_ascii=False),
+            })
+            original_filename = params.get("original_filename", "drawing")
+            human_request = params.get("human_request", "")
+
+    task = asyncio.create_task(_run_image_job(
+        str(drawing_id), tenant_id, image_path,
+        (STEP_JOB_ROOT / str(drawing_id) / "artifacts").resolve(),
+        original_filename,
+        human_request=human_request,
+        restart=True,
+    ))
+    _background_tasks.add(task)
+    task.add_done_callback(_discard_background_task)
+    return {
+        "drawing_id": str(drawing_id),
+        "status": "ai_processing",
+        "retry_count": retry_count,
+        "status_url": f"/api/v1/step/drawings/{drawing_id}",
+    }
+
+
+@router.post("/drawings/{drawing_id}/restart", status_code=status.HTTP_202_ACCEPTED)
+async def restart_stopped_step_drawing(
+    drawing_id: uuid.UUID,
+    current_user: dict = Depends(get_current_user),
+):
+    """Start a fresh task from a stopped drawing, preserving the stopped record."""
+    tenant_id = str(current_user["tenant_id"])
+    new_id = uuid.uuid4()
+    new_dir = (STEP_JOB_ROOT / str(new_id)).resolve()
+    new_image: Path | None = None
+    try:
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                result = await session.execute(text("""
+                    SELECT id, status, source_image_path, package_params
+                    FROM step_drawings
+                    WHERE id = :id AND tenant_id = :tenant_id
+                    FOR UPDATE
+                """), {"id": drawing_id, "tenant_id": tenant_id})
+                row = result.mappings().fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="STEP 任务不存在")
+                if row["status"] != "stopped":
+                    raise HTTPException(status_code=409, detail="只有已停止的任务可以重新运行")
+                source = Path(row["source_image_path"] or "").resolve()
+                old_dir = (STEP_JOB_ROOT / str(drawing_id)).resolve()
+                if not source.is_relative_to(old_dir) or not source.is_file():
+                    raise HTTPException(status_code=409, detail="原始图纸文件不可用，无法重新运行")
+                params = _package_params(dict(row))
+                filename = params.get("original_filename") or source.name
+                new_image = new_dir / source.name
+                new_dir.mkdir(parents=True, exist_ok=False)
+                shutil.copy2(source, new_image)
+                await session.execute(text("""
+                    INSERT INTO step_drawings
+                        (id, tenant_id, source_image_path, status, package_params)
+                    VALUES
+                        (:id, :tenant_id, :source_image_path, 'ai_processing', CAST(:params AS jsonb))
+                """), {
+                    "id": new_id,
+                    "tenant_id": tenant_id,
+                    "source_image_path": str(new_image),
+                    "params": json.dumps({
+                        "mode": "image",
+                        "task": "generate_step",
+                        "human_request": params.get("human_request", ""),
+                        "original_filename": filename,
+                        "retry_count": 0,
+                        "retryable": False,
+                        "restarted_from": str(drawing_id),
+                    }, ensure_ascii=False),
+                })
+        task = asyncio.create_task(_run_image_job(
+            str(new_id), tenant_id, new_image,
+            (new_dir / "artifacts").resolve(),
+            filename,
+            human_request=params.get("human_request", ""),
+        ))
+        _background_tasks.add(task)
+        task.add_done_callback(_discard_background_task)
+    except Exception:
+        if new_dir.is_relative_to(STEP_JOB_ROOT.resolve()) and new_dir.exists():
+            shutil.rmtree(new_dir, ignore_errors=True)
+        raise
+    return {
+        "drawing_id": str(new_id),
+        "restarted_from": str(drawing_id),
+        "status": "ai_processing",
+        "status_url": f"/api/v1/step/drawings/{new_id}",
     }
 
 
@@ -734,7 +1025,7 @@ async def list_step_drawings(
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             text("""
-                SELECT id, status, output_path, preview_path, error_msg,
+                SELECT id, status, source_image_path, output_path, preview_path, error_msg,
                        needs_review, package_params, created_at, updated_at
                 FROM step_drawings
                 WHERE tenant_id = :tenant_id
@@ -762,6 +1053,16 @@ async def list_step_drawings(
                     if row["preview_path"] else None
                 ),
                 "error_msg": row["error_msg"],
+                "human_request": _package_params(dict(row)).get("human_request", ""),
+                "retryable": bool(_package_params(dict(row)).get("retryable", row["status"] == "failed")),
+                "restartable": row["status"] == "stopped" and _restartable_source(dict(row)),
+                "stop_reason": {
+                    "graph_status": _package_params(dict(row)).get("graph_status"),
+                    "result_status": _package_params(dict(row)).get("result_status"),
+                    "evidence_report": _package_params(dict(row)).get("evidence_report"),
+                    "missing_fields": _package_params(dict(row)).get("missing_fields", []),
+                    "conflicting_fields": _package_params(dict(row)).get("conflicting_fields", []),
+                } if row["status"] == "stopped" else None,
                 "needs_review": row["needs_review"],
                 "preview_urls": _preview_urls(row["id"], row),
                 "pending_input": _public_pending_input(

@@ -190,3 +190,111 @@ def test_step_reference_resolver_uses_agentic_search_before_domain_validation(
     assert report["status"] == "candidates_found"
     assert report["agentic_search"]["status"] == "completed"
     assert report["candidates"][0]["match_type"] == "exact"
+
+
+def test_ti_qfn_package_reference_uses_matching_official_step(monkeypatch, tmp_path):
+    """从 TI 产品页发现并下载针数匹配的封装级 STEP。"""
+    async def fake_discover(page_url):
+        assert "partno=DRV8353R" in page_url
+        return [
+            "https://webench.ti.com/cad/dlbxl.cgi/newstep/RGZ0048L.stp"
+        ]
+
+    async def fake_download(url, output_path):
+        assert url == (
+            "https://webench.ti.com/cad/dlbxl.cgi/newstep/RGZ0048L.stp"
+        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("ISO-10303-21;", encoding="ascii")
+        return True
+
+    monkeypatch.setattr(reference_search, "_discover_step_urls", fake_discover)
+    monkeypatch.setattr(reference_search, "_download_public_step", fake_download)
+
+    candidate = asyncio.run(reference_search._download_ti_qfn_package_reference(
+        product_identifiers=["DRV8353RHRGZR"],
+        package_code="RGZ",
+        package_type="VQFN-48",
+        output_dir=tmp_path,
+    ))
+
+    assert candidate["match_type"] == "similar"
+    assert candidate["candidate_type"] == "official_package_reference"
+    assert candidate["local_path"].endswith("candidate_ti_RGZ_48_0_0.step")
+
+
+def test_ti_rgz_package_search_takes_official_download_fast_path(monkeypatch, tmp_path):
+    """已知 RGZ-48 料号时先从 TI 直接下载同封装模型。"""
+    calls = []
+
+    async def fake_package_download(**kwargs):
+        calls.append(kwargs)
+        return {
+            "match_type": "similar",
+            "candidate_type": "official_package_reference",
+            "local_path": str(tmp_path / "RGZ0048L.step"),
+            "download_url": "https://webench.ti.com/cad/dlbxl.cgi/newstep/RGZ0048L.stp",
+        }
+
+    async def unexpected_search(**_kwargs):
+        raise AssertionError("TI package fast path should avoid broad search")
+
+    monkeypatch.setattr(
+        reference_search, "_download_ti_qfn_package_reference", fake_package_download
+    )
+    monkeypatch.setattr(reference_search, "agentic_web_search", unexpected_search)
+
+    report = asyncio.run(reference_search.search_public_step_candidates(
+        identifiers=["DRV8353RHRGZR"],
+        package_type="VQFN-48",
+        manufacturers=["Texas Instruments"],
+        package_code="RGZ",
+        output_dir=tmp_path,
+    ))
+
+    assert report["status"] == "candidates_found"
+    assert report["search_strategy"] == "official_package_catalog_fast_path"
+    assert report["queries"][0] == "site:ti.com DRV8353R"
+    assert report["candidates"][0]["match_type"] == "similar"
+    assert calls[0]["product_identifiers"] == ["DRV8353RHRGZR"]
+
+
+def test_ti_rgz_qfn_code_requires_explicit_package_code_and_pin_count():
+    """TI RGZ 查询只能由明确的图纸证据触发。"""
+    tokens = [
+        {"text": "Texas Instruments", "confidence": 0.98},
+        {"text": "RGZ", "confidence": 0.98},
+    ]
+
+    assert reference_search.extract_explicit_package_code(
+        tokens, ["Texas Instruments"], "VQFN-48"
+    ) == "RGZ"
+    assert reference_search.extract_explicit_package_code(
+        tokens, ["Texas Instruments"], "VQFN-56"
+    ) == "RGZ"
+    assert reference_search.extract_explicit_package_code(
+        tokens, [], "VQFN-48"
+    ) is None
+
+
+def test_package_labels_are_not_treated_as_product_part_numbers():
+    """PIN1 和 QFN 标记不能单独充当网络搜索料号。"""
+    tokens = [
+        {"text": "PIN1", "bbox": [0, 0, 20, 10], "confidence": 0.99},
+        {"text": "QFN48", "bbox": [0, 20, 30, 30], "confidence": 0.99},
+    ]
+
+    assert reference_search.extract_product_identifiers(tokens) == []
+
+
+def test_ti_webbench_package_model_is_not_classified_as_exact_product():
+    """TI WebBench 链接提供的是封装级参考 STEP，必须走尺寸适配。"""
+    result = {
+        "title": "DRV8353R CAD/EDA models",
+        "url": "https://webench.ti.com/cad/cad.cgi?partno=DRV8353R",
+        "snippet": "RGZ0048L.stp",
+    }
+
+    assert reference_search.classify_result_match(
+        result, ["DRV8353R"], "VQFN-48"
+    ) == "similar"
