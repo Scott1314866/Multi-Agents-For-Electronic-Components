@@ -34,7 +34,9 @@ _AGENT_MODEL_ROUTING: dict[str, str] = {
     "pcb":              "deepseek-llm",  # PCB封装图生成
     "step":             "deepseek-llm",  # STEP数模图生成
     "drawing_extract":  "qwen-version",  # 二维工程图视觉理解 / Golden Set
-    "symbol":           "deepseek-llm",  # OrCAD符号图生成
+    "symbol":           "deepseek-llm",
+    # 符号 Agent 的视觉通道要读引脚图（"哪个脚在哪条边上"），必须走多模态模型。
+    "symbol_vision":    "qwen-version",  # OrCAD符号图生成
     "intent":           "deepseek-llm",  # 意图识别
     "summarize":        "deepseek-llm",  # 对话摘要压缩
 }
