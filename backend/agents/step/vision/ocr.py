@@ -301,7 +301,7 @@ def _iou(first: tuple[int, int, int, int], second: tuple[int, int, int, int]) ->
 
 
 def create_paddle_engine() -> Any:
-    """延迟创建 PaddleOCR CPU 引擎，避免单元测试强制加载模型。"""
+    """延迟创建 PP-OCRv6 medium CPU 引擎，避免单元测试强制加载模型。"""
     try:
         from paddleocr import PaddleOCR
     except ImportError as exc:
@@ -310,16 +310,18 @@ def create_paddle_engine() -> Any:
         ) from exc
     try:
         return PaddleOCR(
-            lang="en",
-            ocr_version="PP-OCRv4",
+            text_detection_model_name="PP-OCRv6_medium_det",
+            text_recognition_model_name="PP-OCRv6_medium_rec",
             device="cpu",
             enable_mkldnn=False,
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
             use_textline_orientation=False,
         )
-    except TypeError:
-        return PaddleOCR(lang="en", use_angle_cls=True, show_log=False)
+    except TypeError as exc:
+        raise RuntimeError(
+            "当前 PaddleOCR 不支持 PP-OCRv6 medium；请在 ima-agent 环境使用支持该模型的 PaddleOCR 3.x。"
+        ) from exc
 
 
 def extract_ocr_tokens(
