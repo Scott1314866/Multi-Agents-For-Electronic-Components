@@ -1,501 +1,712 @@
-# backend/api/v1/exam.py
+"""PCB 封装生成的 REST 接口。
+
+四层结构（与 STEP 接口同构）：
+
+    _submit_job            校验 + 落库 + 起后台 task
+      └ _run_job           持 per-job advisory lock
+          └ _run_owned_job 拿到锁后重读 DB，判定该喂什么给图
+              └ _sync_job_projection  把 graph state 摊平成 package_params
+
+三条不变式：**先落库再起 task**（否则崩溃后任务凭空消失）、
+**投影失败不等于任务失败**（checkpoint 还在就能续）、
+**停止不是成功**（``stopped_*`` 一律映射成 stopped，不许冒充 completed）。
+
+输入是**参数 JSON**，不是文件：本 Agent 的职责是"给定封装参数 → 生成
+Allegro 封装"，参数提取在别处（未来可由上游 Agent 产出）。
+"""
+
+from __future__ import annotations
 
 import asyncio
-import os
-import tempfile
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+from typing import Any, Literal
 import uuid
 
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 from langgraph.types import Command
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
-from backend.agents.exam.graph import build_exam_graph
-from backend.dependencies import get_current_user, AsyncSessionLocal
-from backend.core.memory import build_config
+from backend.agents.pcb.persistence import (
+    get_postgres_pcb_snapshot,
+    invoke_postgres_pcb_graph,
+    open_postgres_pcb_job_lock,
+)
 from backend.core.logger import get_logger
+from backend.dependencies import AsyncSessionLocal, get_current_user
 
 router = APIRouter()
 logger = get_logger(__name__)
 
-# 模块级编译图（只执行一次，避免每次请求重新编译）
-_graph = build_exam_graph()
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PCB_JOB_ROOT = PROJECT_ROOT / "output" / "pcb_agent"
 
-# 持有 background task 引用，防止 asyncio GC 回收未完成的任务
+#: 可下载的产物白名单。产物名 → 在 ``generated_files`` / ``artifact_paths`` 里的键。
+ARTIFACT_KEYS = {
+    "build_il",
+    "verify_il",
+    "props_il",
+    "ilinit",
+    "build_scr",
+    "verify_scr",
+    "props_scr",
+    "dra",
+    "psm",
+    "land_pad",
+    "ep_pad",
+}
+#: 给浏览器的友好后缀（下载时按产物种类命名）。
+ARTIFACT_MEDIA_TYPES = {
+    ".il": "text/plain; charset=utf-8",
+    ".scr": "text/plain; charset=utf-8",
+    ".log": "text/plain; charset=utf-8",
+}
+
 _background_tasks: set[asyncio.Task] = set()
 
 
-@router.post("/submit", status_code=202)
-async def submit_exam(
-    exam_id: str      = Form(...),
-    file:    UploadFile = File(...),
-    current_user: dict = Depends(get_current_user),
-):
+# ── 请求模型 ──────────────────────────────────────────────────────
+
+
+class GenerateRequest(BaseModel):
+    """提交一次封装生成。
+
+    ``spec`` 就是 :class:`~backend.agents.pcb.spec.PackageSpec` 的字段集，
+    见 ``backend.agents.pcb.spec.wson8_3x3`` 的示例。
     """
-    学员提交作答 Word 试卷，触发 AI 三轨批改（异步后台）。
-    立即返回 202 和 submission_id，批改在后台异步完成。
-    """
-    if not (file.filename or "").endswith(".docx"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="仅支持 .docx 格式",
-        )
 
-    submission_id = str(uuid.uuid4())
-    student_id    = current_user["user_id"]
-    tmp_path      = os.path.join(tempfile.gettempdir(), f"{submission_id}.docx")
-
-    # 把上传文件保存到临时目录
-    content = await file.read()
-    with open(tmp_path, "wb") as f:
-        f.write(content)
-
-    # ── 验证试卷 ID 是否存在 ─────────────────────────────────────
-    async with AsyncSessionLocal() as session:
-        exam_row = (await session.execute(
-            text("SELECT id FROM exams WHERE id = :exam_id AND tenant_id = :tenant_id"),
-            {"exam_id": exam_id, "tenant_id": current_user["tenant_id"]},
-        )).fetchone()
-
-    if not exam_row:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"试卷 ID 不存在（{exam_id}）。"
-                "本地开发环境请先运行 python scripts/seed_data.py。"
-            ),
-        )
-
-    # ── 检查是否已有提交记录（同一学员同一试卷只能有一份）────────
-    existing_id: str | None = None
-    async with AsyncSessionLocal() as session:
-        row = (await session.execute(
-            text("""
-                SELECT id, status FROM exam_submissions
-                WHERE exam_id = :exam_id AND student_id = :student_id
-            """),
-            {"exam_id": exam_id, "student_id": student_id},
-        )).fetchone()
-
-    if row:
-        _existing_id, _existing_status = str(row[0]), row[1]
-        if _existing_status in ("pending_review", "reviewed", "published"):
-            # 已有待确认或已发布的结果，拒绝重新提交
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="该试卷已有待确认或已发布的批改结果，无法重新提交。",
-            )
-        # ai_processing 或 submitted 状态：允许重提（删旧记录）
-        existing_id = _existing_id
-
-    # ── 写入提交记录 ─────────────────────────────────────────────
-    async with AsyncSessionLocal() as session:
-        async with session.begin():
-            if existing_id:
-                await session.execute(
-                    text("DELETE FROM exam_submissions WHERE id = :id"),
-                    {"id": existing_id},
-                )
-            await session.execute(
-                text("""
-                    INSERT INTO exam_submissions
-                        (id, tenant_id, exam_id, student_id, status, submitted_at)
-                    VALUES
-                        (:id, :tenant_id, :exam_id, :student_id, 'ai_processing', NOW())
-                """),
-                {
-                    "id":         submission_id,
-                    "tenant_id":  current_user["tenant_id"],
-                    "exam_id":    exam_id,
-                    "student_id": student_id,
-                },
-            )
-
-    config = build_config(current_user["user_id"], submission_id)
-    print(f'config: {config}')
-
-    initial_state = {
-        "messages":           [],
-        "student_id":         current_user["user_id"],
-        "tenant_id":          current_user["tenant_id"],
-        "session_id":         submission_id,
-        "exam_id":            exam_id,
-        "submission_id":      submission_id,
-        "word_file_path":     tmp_path,
-        "parsed_questions":   [],
-        "objective_results":  [],
-        "subjective_results": [],
-        "code_results":       [],
-        "pre_review_summary": {},
-        "weak_points":        [],
-        "weak_points_summary": "",
-        "teacher_decision":   None,
-        "final_results":      [],
-        "structured_output":  None,
-        "fallback_used":      False,
-        "teacher_notified":   False,
-        "published":          False,
-    }
-
-    # ── 后台任务的 done callback ──────────────────────────────
-    def _on_task_done(t: asyncio.Task):
-        _background_tasks.discard(t)   # 从 set 移除，允许 GC
-        task_failed = not t.cancelled() and t.exception() is not None
-
-        if task_failed:
-            logger.error(
-                "exam.background_task_failed",
-                submission_id=submission_id,
-                error=str(t.exception()),
-                exc_info=t.exception(),
-            )
-
-        async def _cleanup():
-            if task_failed:
-                # 批改失败时，把状态回滚为 submitted，允许学员重新提交
-                try:
-                    async with AsyncSessionLocal() as db_sess:
-                        async with db_sess.begin():
-                            await db_sess.execute(
-                                text("""
-                                    UPDATE exam_submissions
-                                    SET status = 'submitted', updated_at = NOW()
-                                    WHERE id = :sid AND status = 'ai_processing'
-                                """),
-                                {"sid": submission_id},
-                            )
-                except Exception as db_err:
-                    logger.warning(
-                        "exam.status_reset_failed",
-                        submission_id=submission_id,
-                        error=str(db_err),
-                    )
-            # 无论成败都清理临时文件
-            if os.path.exists(tmp_path):
-                try:
-                    os.remove(tmp_path)
-                except OSError:
-                    pass
-
-        cleanup_task = asyncio.ensure_future(_cleanup())
-        _background_tasks.add(cleanup_task)
-        cleanup_task.add_done_callback(_background_tasks.discard)
-
-    # ── 启动后台批改任务 ──────────────────────────────────────
-    # graph.ainvoke 会在 teacher_review_node 处 interrupt，自动返回
-    # 此时 task 完成，_on_task_done 被调用；图状态存在 MemorySaver 里等待恢复
-    task = asyncio.create_task(_graph.ainvoke(initial_state, config=config))
-    _background_tasks.add(task)
-    task.add_done_callback(_on_task_done)
-
-    logger.info(
-        "exam.submitted",
-        submission_id=submission_id,
-        student_id=current_user["user_id"],
-        exam_id=exam_id,
+    spec: dict[str, Any] = Field(description="PackageSpec 的字段集")
+    mode: Literal["full", "emit_only"] = Field(
+        default="full",
+        description="full = 生成并执行 Allegro；emit_only = 只生成 SKILL 装置",
     )
+    allegro_exe: str | None = Field(
+        default=None, description="allegro.exe 路径；留空则自动探测或读 ALLEGRO_EXE"
+    )
+    allegro_timeout: float | None = Field(default=None, gt=0, description="单阶段超时（秒）")
 
-    return {
-        "submission_id": submission_id,
-        "status":        "ai_processing",
-        "message":       "试卷已提交，AI 正在批改中，完成后等待教师确认。",
+
+class HumanInputRequest(BaseModel):
+    """回答一次人工询问。"""
+
+    interrupt_id: str = Field(min_length=1, description="来自 pending_input.interrupt_id")
+    answer: dict[str, Any] = Field(description="例如 {'action': 'confirm'}")
+
+
+# ── 小工具 ────────────────────────────────────────────────────────
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    raise TypeError(f"无法序列化 {type(value)!r}")
+
+
+def _package_params(row: Any) -> dict:
+    raw = row["package_params"]
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw:
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _discard_background_task(task: asyncio.Task) -> None:
+    """任务结束后从持有集合里摘掉；意外异常在这里落日志。"""
+    _background_tasks.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("pcb.background_task_unhandled", exc_info=exc)
+
+
+# ── 状态映射 ──────────────────────────────────────────────────────
+
+
+def _pending_input(snapshot: dict) -> dict | None:
+    """取当前待答的问题（含 interrupt id）。"""
+    interrupts = snapshot.get("interrupts") or []
+    if not interrupts:
+        return None
+    first = interrupts[0]
+    value = first.get("value") or {}
+    return {"interrupt_id": first.get("id"), **value}
+
+
+def _public_pending_input(pending: dict | None) -> dict | None:
+    """对外暴露前裁剪：不泄漏内部路径。"""
+    if not pending:
+        return None
+    public = {
+        key: value
+        for key, value in pending.items()
+        if key not in {"work_dir", "generated_files"}
     }
+    if pending.get("stage") == "review":
+        public["artifacts"] = sorted(ARTIFACT_KEYS)
+    return public
 
 
-@router.get("/my-submissions")
-async def list_my_submissions(
-    current_user: dict = Depends(get_current_user),
-):
-    """学员查询自己所有的试卷提交记录"""
+def _job_status(snapshot: dict) -> str:
+    """把图的结果诚实地映射成任务状态。
+
+    普通停止的图**不是**成功 —— 没有可续的问题、也没过人工审核时，
+    一律归 stopped，不许冒充 completed。
+    """
+    pending = _pending_input(snapshot)
+    if pending:
+        return "pending_review" if pending.get("stage") == "review" else "awaiting_input"
+    state = snapshot.get("values") or {}
+    result = state.get("result") or {}
+    graph_status = state.get("status") or result.get("status") or ""
+
+    if graph_status == "failed" or result.get("status") == "failed":
+        return "failed"
+    review = state.get("human_review") or {}
+    if review.get("action") == "reject" or graph_status == "rejected":
+        return "rejected"
+    if graph_status == "skills_ready":
+        # emit_only 模式：装置齐了，但没执行 CAD，不能算 completed。
+        return "pending_review"
+    if graph_status.startswith("stopped"):
+        return "stopped"
+    if snapshot.get("next_nodes"):
+        return "ai_processing"
+    if review.get("action") == "approve" and graph_status == "reviewed":
+        return "completed"
+    return "stopped"
+
+
+# ── 数据库与投影 ──────────────────────────────────────────────────
+
+
+async def _update_job_failed(drawing_id: str, tenant_id: str, error: str) -> None:
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            text("""
+                UPDATE pcb_drawings
+                SET status = 'failed', error_msg = :error, updated_at = NOW()
+                WHERE id = CAST(:id AS uuid) AND tenant_id = :tenant_id
+            """),
+            {"id": drawing_id, "tenant_id": tenant_id, "error": error[:4000]},
+        )
+        await session.commit()
+
+
+async def _mark_job_recoverable(
+    drawing_id: str, tenant_id: str, error: str, *, projection_failed: bool
+) -> None:
+    """把任务标成可恢复：留在 ``ai_processing``，但记下投影失败。"""
+    params = {
+        "projection_sync_failed": projection_failed,
+        "projection_sync_error": error[:2000],
+        "worker_interrupted": True,
+    }
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            text("""
+                UPDATE pcb_drawings
+                SET status = 'ai_processing',
+                    package_params = COALESCE(package_params, '{}'::jsonb)
+                        || CAST(:params AS jsonb),
+                    error_msg = :error,
+                    updated_at = NOW()
+                WHERE id = CAST(:id AS uuid) AND tenant_id = :tenant_id
+            """),
+            {
+                "id": drawing_id,
+                "tenant_id": tenant_id,
+                "params": json.dumps(params, ensure_ascii=False),
+                "error": error[:4000],
+            },
+        )
+        await session.commit()
+
+
+async def _read_worker_job(drawing_id: str, tenant_id: str) -> dict | None:
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             text("""
-                SELECT es.id AS submission_id, e.title AS exam_title,
-                       es.exam_id, es.status, es.submitted_at
-                FROM exam_submissions es
-                LEFT JOIN exams e ON e.id = es.exam_id
-                WHERE es.student_id = :student_id
-                ORDER BY es.submitted_at DESC
-                LIMIT 20
+                SELECT id, tenant_id, package_params, status
+                FROM pcb_drawings
+                WHERE id = CAST(:id AS uuid) AND tenant_id = :tenant_id
             """),
-            {"student_id": current_user["user_id"]},
+            {"id": drawing_id, "tenant_id": tenant_id},
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+
+async def _persist_job_snapshot(drawing_id: str, tenant_id: str, snapshot: dict) -> None:
+    """把 graph state 摊平成 ``package_params`` 并向业务表投影。"""
+    state = snapshot.get("values") or {}
+    result = state.get("result") or {}
+    job_status = _job_status(snapshot)
+    review = state.get("human_review") or {}
+    reviewed_by = (
+        review.get("user_id") if review.get("action") in {"approve", "reject"} else None
+    )
+    reviewed_at = (
+        datetime.fromisoformat(review["answered_at"])
+        if reviewed_by and review.get("answered_at")
+        else None
+    )
+
+    error: str | None = None
+    if job_status == "failed":
+        error = "; ".join(str(item) for item in state.get("errors", [])) or "PCB 封装生成失败"
+
+    artifacts = result.get("artifacts") or state.get("artifact_paths") or {}
+    package_params = {
+        "mode": state.get("mode", "full"),
+        "task": "generate_pcb_package",
+        "spec": state.get("spec", {}),
+        "spec_name": (state.get("spec") or {}).get("name", ""),
+        "graph_status": state.get("status"),
+        "result_status": result.get("status"),
+        "derived_summary": state.get("derived_summary", ""),
+        "clearance_issues": state.get("clearance_issues", []),
+        "warnings": state.get("warnings", []),
+        "verdict": state.get("verdict", {}),
+        "artifacts": artifacts,
+        "generated_files": state.get("generated_files", {}),
+        "work_dir": state.get("work_dir", ""),
+        "human_spec_confirmation": state.get("human_spec_confirmation"),
+        "human_review": review or None,
+        "human_history": state.get("human_history", []),
+        "pending_input": _pending_input(snapshot),
+        "checkpoint_id": snapshot.get("checkpoint_id"),
+        "next_nodes": snapshot.get("next_nodes", []),
+        "projection_sync_failed": False,
+        "projection_sync_error": None,
+        "retryable": job_status == "failed",
+    }
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            text("""
+                UPDATE pcb_drawings
+                SET status = :status,
+                    output_path = :output_path,
+                    package_params = (COALESCE(package_params, '{}'::jsonb)
+                        - 'accepted_input') || CAST(:package_params AS jsonb),
+                    error_msg = :error_msg,
+                    needs_review = :needs_review,
+                    reviewed_by = CAST(:reviewed_by AS uuid),
+                    reviewed_at = CAST(:reviewed_at AS timestamptz),
+                    updated_at = NOW()
+                WHERE id = CAST(:id AS uuid) AND tenant_id = :tenant_id
+            """),
+            {
+                "id": drawing_id,
+                "tenant_id": tenant_id,
+                "status": job_status,
+                "output_path": artifacts.get("dra") or artifacts.get("build_il"),
+                "package_params": json.dumps(package_params, ensure_ascii=False, default=_json_default),
+                "error_msg": error[:4000] if error else None,
+                "needs_review": job_status in {"pending_review", "awaiting_input"},
+                "reviewed_by": reviewed_by,
+                "reviewed_at": reviewed_at,
+            },
+        )
+        await session.commit()
+    logger.info("pcb.job_checkpoint_saved", drawing_id=drawing_id, status=job_status)
+
+
+async def _sync_job_projection(
+    drawing_id: str, tenant_id: str, snapshot: dict | None = None
+) -> None:
+    """投影失败**不等于**任务失败：checkpoint 还在，下次能接着跑。"""
+    try:
+        if snapshot is None:
+            snapshot = await get_postgres_pcb_snapshot(drawing_id)
+        await _persist_job_snapshot(drawing_id, tenant_id, snapshot)
+    except Exception as exc:
+        logger.error("pcb.job_projection_failed", drawing_id=drawing_id, exc_info=True)
+        await _mark_job_recoverable(
+            drawing_id, tenant_id, f"状态投影失败：{exc}", projection_failed=True
+        )
+
+
+# ── 执行 ──────────────────────────────────────────────────────────
+
+
+def _initial_state(params: dict) -> dict:
+    return {
+        "task": "generate_pcb_package",
+        "mode": params.get("mode", "full"),
+        "spec": params.get("spec", {}),
+        "work_dir": params.get("work_dir") or "",
+        "allegro_exe": params.get("allegro_exe"),
+        "allegro_timeout": params.get("allegro_timeout"),
+        "errors": [],
+    }
+
+
+async def _run_owned_job(
+    drawing_id: str,
+    tenant_id: str,
+    *,
+    resume_input: dict | None = None,
+    recovering: bool = False,
+) -> None:
+    """拿到锁之后再读一次 DB 决定喂什么，绝不重放已消费的输入。"""
+    row = await _read_worker_job(drawing_id, tenant_id)
+    if row is None:
+        return
+    params = _package_params(row)
+    if row["status"] != "ai_processing" and not params.get("projection_sync_failed"):
+        return
+
+    accepted = params.get("accepted_input")
+    if recovering or resume_input is not None or accepted:
+        try:
+            snapshot = await get_postgres_pcb_snapshot(drawing_id)
+        except Exception as exc:
+            await _mark_job_recoverable(
+                drawing_id, tenant_id, f"恢复时无法读取 checkpoint：{exc}",
+                projection_failed=True,
+            )
+            return
+        if not snapshot.get("checkpoint_id"):
+            await _update_job_failed(
+                drawing_id,
+                tenant_id,
+                "任务失去执行进程且没有 PostgreSQL checkpoint，无法安全恢复；请重新提交新任务",
+            )
+            return
+        interrupts = snapshot.get("interrupts") or []
+        matching = next(
+            (
+                item
+                for item in interrupts
+                if accepted and item["id"] == accepted.get("interrupt_id")
+            ),
+            None,
+        )
+        if matching is not None:
+            # 只消费已认证、已校验的持久化回答；过期回答不会误答后一个问题。
+            graph_input: Any = Command(resume={matching["id"]: accepted["answer"]})
+        elif interrupts or not snapshot.get("next_nodes"):
+            await _sync_job_projection(drawing_id, tenant_id, snapshot)
+            return
+        else:
+            # None 续跑 checkpoint 的下一批节点；重新塞初始 state 会重放人工阶段。
+            graph_input = None
+    else:
+        graph_input = _initial_state(params)
+
+    try:
+        await invoke_postgres_pcb_graph(drawing_id, graph_input)
+    except Exception as exc:
+        logger.error("pcb.job_exception", drawing_id=drawing_id, exc_info=True)
+        await _update_job_failed(drawing_id, tenant_id, str(exc))
+        return
+    await _sync_job_projection(drawing_id, tenant_id)
+
+
+async def _run_job(
+    drawing_id: str,
+    tenant_id: str,
+    *,
+    resume_input: dict | None = None,
+    recovering: bool = False,
+) -> None:
+    """持 per-job advisory lock 执行；拿不到锁说明别的 worker 在跑。"""
+    async with open_postgres_pcb_job_lock(drawing_id, wait=not recovering) as acquired:
+        if not acquired:
+            logger.info("pcb.recovery_active_worker_skipped", drawing_id=drawing_id)
+            return
+        try:
+            await _run_owned_job(
+                drawing_id, tenant_id, resume_input=resume_input, recovering=recovering
+            )
+        except asyncio.CancelledError:
+            await _mark_job_recoverable(
+                drawing_id, tenant_id, "进程关闭时任务被中断", projection_failed=True
+            )
+            raise
+        except Exception as exc:
+            logger.error("pcb.job_unhandled", drawing_id=drawing_id, exc_info=True)
+            await _update_job_failed(drawing_id, tenant_id, str(exc))
+
+
+async def _submit_job(request: GenerateRequest, current_user: dict) -> dict:
+    drawing_id = str(uuid.uuid4())
+    tenant_id = str(current_user["tenant_id"])
+    work_dir = PCB_JOB_ROOT / drawing_id
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    params = {
+        "mode": request.mode,
+        "task": "generate_pcb_package",
+        "spec": request.spec,
+        "allegro_exe": request.allegro_exe,
+        "allegro_timeout": request.allegro_timeout,
+        "work_dir": str(work_dir.resolve()),
+        "retryable": False,
+    }
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                text("""
+                    INSERT INTO pcb_drawings (id, tenant_id, status, package_params)
+                    VALUES (CAST(:id AS uuid), :tenant_id, 'ai_processing',
+                            CAST(:package_params AS jsonb))
+                """),
+                {
+                    "id": drawing_id,
+                    "tenant_id": tenant_id,
+                    "package_params": json.dumps(params, ensure_ascii=False, default=_json_default),
+                },
+            )
+            await session.commit()
+    except Exception:
+        logger.error("pcb.job_insert_failed", drawing_id=drawing_id, exc_info=True)
+        raise HTTPException(status_code=503, detail="任务暂时无法登记，请稍后重试")
+
+    task = asyncio.create_task(_run_job(drawing_id, tenant_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_discard_background_task)
+    logger.info("pcb.job_submitted", drawing_id=drawing_id, tenant_id=tenant_id)
+    return {
+        "drawing_id": drawing_id,
+        "status": "ai_processing",
+        "status_url": f"/api/v1/pcb/packages/{drawing_id}",
+    }
+
+
+# ── 路由 ──────────────────────────────────────────────────────────
+
+
+@router.post("/generate", status_code=status.HTTP_202_ACCEPTED)
+async def generate_package(
+    request: GenerateRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """提交一次 PCB 封装生成。
+
+    参数不合规不会走到这里失败 —— 它会在图中被拦到 ``stopped_invalid_spec``
+    终态，并通过 ``pending_input`` / ``result.issues`` 把问题原样交回。
+    """
+    return await _submit_job(request, current_user)
+
+
+@router.get("/packages/{drawing_id}")
+async def get_package(
+    drawing_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """查询任务状态、产物清单与待答问题。"""
+    tenant_id = str(current_user["tenant_id"])
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            text("""
+                SELECT id, status, package_params, output_path, error_msg,
+                       needs_review, created_at, updated_at
+                FROM pcb_drawings
+                WHERE id = CAST(:id AS uuid) AND tenant_id = :tenant_id
+            """),
+            {"id": drawing_id, "tenant_id": tenant_id},
+        )
+        row = result.mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    params = _package_params(row)
+    return {
+        "drawing_id": str(row["id"]),
+        "status": row["status"],
+        "spec_name": params.get("spec_name", ""),
+        "summary": params.get("derived_summary", ""),
+        "issues": params.get("clearance_issues", []),
+        "warnings": params.get("warnings", []),
+        "verdict": params.get("verdict", {}),
+        "artifacts": sorted((params.get("artifacts") or {}).keys()),
+        "human_history": params.get("human_history", []),
+        "pending_input": _public_pending_input(params.get("pending_input")),
+        "error_msg": row["error_msg"],
+        "needs_review": row["needs_review"],
+        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+    }
+
+
+@router.post("/packages/{drawing_id}/human-input")
+async def submit_human_input(
+    drawing_id: str,
+    request: HumanInputRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """回答当前的人工询问并续跑任务。
+
+    compare-and-set：只有把任务从 ``awaiting_input``/``pending_review``
+    抢过来的那一次回答会被接受，重复提交返回 409。
+    """
+    tenant_id = str(current_user["tenant_id"])
+    answer = dict(request.answer)
+    # 身份由认证上下文注入，不接受客户端自报。
+    answer["_actor"] = {
+        "user_id": str(current_user["user_id"]),
+        "answered_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            result = await session.execute(
+                text("""
+                    SELECT status, package_params FROM pcb_drawings
+                    WHERE id = CAST(:id AS uuid) AND tenant_id = :tenant_id
+                    FOR UPDATE
+                """),
+                {"id": drawing_id, "tenant_id": tenant_id},
+            )
+            row = result.mappings().first()
+            if row is None:
+                raise HTTPException(status_code=404, detail="任务不存在")
+            if row["status"] not in {"awaiting_input", "pending_review"}:
+                raise HTTPException(status_code=409, detail="该任务当前不接受人工输入")
+            params = _package_params(row)
+            pending = params.get("pending_input") or {}
+            if not pending or pending.get("interrupt_id") != request.interrupt_id:
+                raise HTTPException(status_code=409, detail="人工问题已过期，请刷新后重试")
+
+            params["accepted_input"] = {
+                "interrupt_id": request.interrupt_id,
+                "answer": answer,
+            }
+            claimed = await session.execute(
+                text("""
+                    UPDATE pcb_drawings
+                    SET status = 'ai_processing',
+                        package_params = CAST(:package_params AS jsonb),
+                        updated_at = NOW()
+                    WHERE id = CAST(:id AS uuid) AND tenant_id = :tenant_id
+                      AND status = :previous_status
+                    RETURNING id
+                """),
+                {
+                    "id": drawing_id,
+                    "tenant_id": tenant_id,
+                    "previous_status": row["status"],
+                    "package_params": json.dumps(params, ensure_ascii=False, default=_json_default),
+                },
+            )
+            if claimed.scalar_one_or_none() is None:
+                raise HTTPException(status_code=409, detail="该问题已被回答")
+
+    task = asyncio.create_task(_run_job(drawing_id, tenant_id, resume_input={"accepted": True}))
+    _background_tasks.add(task)
+    task.add_done_callback(_discard_background_task)
+    logger.info("pcb.human_input_accepted", drawing_id=drawing_id)
+    return {"drawing_id": drawing_id, "status": "ai_processing"}
+
+
+@router.get("/packages")
+async def list_packages(
+    limit: int = 20,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """按租户列出最近的任务。"""
+    tenant_id = str(current_user["tenant_id"])
+    limit = max(1, min(limit, 100))
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            text("""
+                SELECT id, status, package_params, created_at
+                FROM pcb_drawings
+                WHERE tenant_id = :tenant_id
+                ORDER BY created_at DESC
+                LIMIT :limit
+            """),
+            {"tenant_id": tenant_id, "limit": limit},
         )
         rows = result.mappings().all()
-
     return {
         "items": [
             {
-                "submission_id": str(r["submission_id"]),
-                "exam_id":       str(r["exam_id"]),
-                "exam_title":    r["exam_title"] or "",
-                "status":        r["status"],
-                "submitted_at":  r["submitted_at"].isoformat() if r["submitted_at"] else None,
+                "drawing_id": str(row["id"]),
+                "status": row["status"],
+                "spec_name": _package_params(row).get("spec_name", ""),
+                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
             }
-            for r in rows
+            for row in rows
         ]
     }
 
 
-@router.get("/my-submissions/{submission_id}")
-async def get_my_submission(
-    submission_id: str,
-    current_user:  dict = Depends(get_current_user),
-):
-    """
-    学员查询批改状态与结果。
-    - 未发布（ai_processing / pending_review）：只返回状态，等待
-    - 已发布（published）：返回完整批改结果（逐题 + 薄弱点）
-    """
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            text("""
-                SELECT id, status, weak_points, weak_points_summary
-                FROM exam_submissions
-                WHERE id = :sid AND student_id = :student_id
-            """),
-            {"sid": submission_id, "student_id": current_user["user_id"]},
-        )
-        row = result.mappings().fetchone()
-
-    if not row:
-        raise HTTPException(status_code=404, detail="提交记录不存在")
-
-    # 未发布：只返回状态，让学员继续轮询
-    if row["status"] != "published":
-        return {"submission_id": submission_id, "status": row["status"]}
-
-    # 已发布：从 exam_reviews 读取完整结果
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            text("""
-                SELECT er.question_id, er.question_type, er.knowledge_tag,
-                       er.student_answer, er.ai_score, er.ai_feedback,
-                       er.teacher_score, er.teacher_comment, er.final_score,
-                       er.needs_review, er.ai_raw_result,
-                       q.question_no, q.content, q.correct_answer, q.score AS full_score
-                FROM exam_reviews er
-                JOIN questions q ON q.id = er.question_id
-                WHERE er.submission_id = :sid
-                ORDER BY q.question_no
-            """),
-            {"sid": submission_id},
-        )
-        reviews = result.mappings().all()
-
-    by_question      = []
-    total_score      = 0
-    full_score_total = 0
-
-    for r in reviews:
-        import json as _json
-        raw = r["ai_raw_result"] or {}
-        if isinstance(raw, str):
-            try:
-                raw = _json.loads(raw)
-            except Exception:
-                raw = {}
-        final = r["final_score"] if r["final_score"] is not None else r["ai_score"]
-        by_question.append({
-            "question_id":       str(r["question_id"]),
-            "question_no":       r["question_no"],
-            "question_type":     r["question_type"],
-            "full_score":        r["full_score"],
-            "score":             r["ai_score"],
-            "final_score":       final,
-            "student_answer":    r["student_answer"] or "",
-            "correct_answer":    r["correct_answer"] or "",
-            "ai_feedback":       r["ai_feedback"] or "",
-            "teacher_comment":   r["teacher_comment"] or "",
-            "needs_review":      r["needs_review"],
-            "point_results":     raw.get("point_results", []),
-            "quality_feedback":  raw.get("quality_feedback", []),
-        })
-        total_score      += final or 0
-        full_score_total += r["full_score"] or 0
-
-    weak_points         = row["weak_points"] if isinstance(row["weak_points"], list) else []
-    weak_points_summary = row["weak_points_summary"] or ""
-
-    return {
-        "submission_id": submission_id,
-        "status":        "published",
-        "pre_review_summary": {
-            "total_score": total_score,
-            "full_score":  full_score_total,
-            "score_rate":  round(total_score / full_score_total, 4) if full_score_total else 0,
-            "by_question": by_question,
-        },
-        "weak_points":         weak_points,
-        "weak_points_summary": weak_points_summary,
-    }
-
-
-
-@router.get("/submissions/{submission_id}/review")
-async def get_submission_review(
-    submission_id: str,
-    current_user:  dict = Depends(get_current_user),
-):
-    """教师获取 AI 预批改详情（从 MemorySaver 读取图暂停时的 State）"""
-    config = {"configurable": {"thread_id": await _get_thread_id(submission_id)}}
-
-    try:
-        state_snapshot = await _graph.aget_state(config)
-        print(f'state: {state_snapshot}')
-        print(f'state: {state_snapshot.values}')
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"找不到该提交记录的批改状态：{e}")
-
-    if not state_snapshot or not state_snapshot.values:
-        raise HTTPException(status_code=404, detail="批改尚未完成或记录不存在")
-
-    sv = state_snapshot.values
-    return {
-        "submission_id":       submission_id,
-        "student_id":          sv.get("student_id", ""),
-        "pre_review_summary":  sv.get("pre_review_summary", {}),
-        "weak_points":         sv.get("weak_points", []),
-        "weak_points_summary": sv.get("weak_points_summary", ""),
-    }
-
-# ── 辅助函数：从 DB 获取 thread_id ───────────────────────────
-
-async def _get_thread_id(submission_id: str) -> str:
-    """从 exam_submissions 读 student_id，拼出 MemorySaver 的 thread_id"""
-    from backend.core.memory import build_thread_id
-    try:
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                text("SELECT student_id FROM exam_submissions WHERE id = :sid"),
-                {"sid": submission_id},
-            )
-            row = result.fetchone()
-            if row:
-                return build_thread_id(str(row[0]), submission_id)
-    except Exception as e:
-        logger.warning("exam.get_thread_id_failed", submission_id=submission_id, error=str(e))
-    return f"student_unknown_session_{submission_id}"
-
-
-@router.get("/pending-reviews")
-async def get_pending_reviews(
+@router.get("/packages/{drawing_id}/artifacts/{artifact_name}")
+async def download_artifact(
+    drawing_id: str,
+    artifact_name: str,
     current_user: dict = Depends(get_current_user),
-):
-    """教师获取所有待确认的提交（status=pending_review）"""
+) -> FileResponse:
+    """下载一份产物（SKILL 脚本、剧本或 Allegro 生成的二进制）。
+
+    产物名走白名单；路径必须落在该任务的目录内（防目录穿越）。
+    """
+    if artifact_name not in ARTIFACT_KEYS:
+        raise HTTPException(status_code=404, detail="产物不存在")
+
+    tenant_id = str(current_user["tenant_id"])
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             text("""
-                SELECT
-                    es.id           AS submission_id,
-                    es.student_id,
-                    u.username      AS student_name,
-                    e.title         AS exam_title,
-                    es.submitted_at
-                FROM exam_submissions es
-                JOIN users u ON u.id = es.student_id
-                JOIN exams e ON e.id = es.exam_id
-                WHERE es.tenant_id = :tenant_id
-                  AND es.status    = 'pending_review'
-                ORDER BY es.submitted_at DESC
+                SELECT package_params FROM pcb_drawings
+                WHERE id = CAST(:id AS uuid) AND tenant_id = :tenant_id
             """),
-            {"tenant_id": current_user["tenant_id"]},
+            {"id": drawing_id, "tenant_id": tenant_id},
+        )
+        row = result.mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    params = _package_params(row)
+    recorded = (params.get("artifacts") or {}).get(artifact_name)
+    if not recorded:
+        raise HTTPException(status_code=404, detail="该产物尚未生成")
+
+    job_root = (PCB_JOB_ROOT / str(drawing_id)).resolve()
+    artifact_path = Path(recorded).resolve()
+    if not artifact_path.is_relative_to(job_root) or not artifact_path.is_file():
+        raise HTTPException(status_code=404, detail="产物文件不存在")
+
+    media_type = ARTIFACT_MEDIA_TYPES.get(artifact_path.suffix.lower(), "application/octet-stream")
+    return FileResponse(artifact_path, media_type=media_type, filename=artifact_path.name)
+
+
+# ── 启动恢复 ──────────────────────────────────────────────────────
+
+
+async def recover_pcb_jobs() -> None:
+    """启动时接回被中断的任务。
+
+    扫 ``ai_processing`` 与"投影失败"两类；每个任务在 per-job 锁下恢复，
+    别的进程正在跑就跳过（不重放）。
+    """
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            text("""
+                SELECT id, tenant_id
+                FROM pcb_drawings
+                WHERE status = 'ai_processing'
+                   OR package_params->>'projection_sync_failed' = 'true'
+                ORDER BY created_at
+            """)
         )
         rows = result.mappings().all()
 
-    items = []
     for row in rows:
-        submission_id = str(row["submission_id"])
-        pre_review    = {"total_score": 0, "full_score": 0, "needs_review_count": 0}
-        weak_points   = []
-
-        # 从 MemorySaver 读取 AI 预批改结果（图暂停时保存的 State）
-        try:
-            thread_id = await _get_thread_id(submission_id)
-            config    = {"configurable": {"thread_id": thread_id}}
-            snapshot  = await _graph.aget_state(config)
-            if snapshot and snapshot.values:
-                sv         = snapshot.values
-                summary    = sv.get("pre_review_summary", {})
-                pre_review = {
-                    "total_score":        summary.get("total_score", 0),
-                    "full_score":         summary.get("full_score", 0),
-                    "needs_review_count": summary.get("needs_review_count", 0),
-                }
-                weak_points = sv.get("weak_points", [])
-        except Exception as _e:
-            logger.warning("exam.pending_review_state_read_failed",
-                           submission_id=submission_id, error=str(_e))
-
-        items.append({
-            "submission_id": submission_id,
-            "student_name":  row["student_name"],
-            "exam_title":    row["exam_title"],
-            "submitted_at":  row["submitted_at"].isoformat() if row["submitted_at"] else None,
-            "pre_review":    pre_review,
-            "weak_points":   weak_points[:3],  # 列表只显示前3条
-        })
-
-    return {"items": items, "total": len(items)}
-
-
-class ConfirmRequest(BaseModel):
-    action:        str
-    modifications: list[dict] = []
-
-
-@router.post("/submissions/{submission_id}/confirm")
-async def confirm_review(
-    submission_id: str,
-    req:           ConfirmRequest,
-    current_user:  dict = Depends(get_current_user),
-):
-    """
-    教师确认批改结果，恢复 interrupt，触发 apply_teacher_decision → publish_results。
-    """
-    if req.action not in ("approve", "modify"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="action 只能为 approve 或 modify",
-        )
-
-    thread_id = await _get_thread_id(submission_id)
-    config    = {"configurable": {"thread_id": thread_id}}
-
-    decision = {
-        "action":        req.action,
-        "modifications": req.modifications,
-        "teacher_id":    current_user["user_id"],
-    }
-
-    try:
-        # Command(resume=decision) 让图从 teacher_review_node 的 interrupt() 处继续
-        result = await _graph.ainvoke(Command(resume=decision), config=config)
-    except Exception as e:
-        logger.error("exam.confirm_failed", submission_id=submission_id, error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"发布失败：{e}",
-        )
-
-    structured = result.get("structured_output", {}) or {}
-
-    logger.info(
-        "exam.published",
-        submission_id=submission_id,
-        teacher_id=current_user["user_id"],
-        final_score=structured.get("final_score", 0),
-    )
-
-    return {
-        "submission_id":       submission_id,
-        "status":              "published",
-        "final_score":         structured.get("final_score", 0),
-        "full_score":          structured.get("full_score", 0),
-        "score_rate":          structured.get("score_rate", 0),
-        "weak_points":         structured.get("weak_points", []),
-        "weak_points_summary": structured.get("weak_points_summary", ""),
-    }
+        drawing_id = str(row["id"])
+        tenant_id = str(row["tenant_id"])
+        task = asyncio.create_task(_run_job(drawing_id, tenant_id, recovering=True))
+        _background_tasks.add(task)
+        task.add_done_callback(_discard_background_task)
+        logger.info("pcb.recovery_scheduled", drawing_id=drawing_id)
