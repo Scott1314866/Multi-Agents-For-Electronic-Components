@@ -1,89 +1,79 @@
-# backend/agents/exam/state.py
+"""符号生成 Agent 的状态定义。
 
-from typing import Annotated, Optional
+唯一必填输入是 ``pdf_path``。**大块中间产物一律落盘，state 里只留路径** ——
+MinerU 的 ``content_list`` 与渲染出的页面图动辄几 MB，塞进 state 会把
+PostgreSQL 的 checkpoint 撑爆。
+
+约定与其他 Agent 一致：``TypedDict, total=False``，节点只返回自己写出的
+增量，列表靠节点里显式拼接。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
 from typing_extensions import TypedDict
-from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage
-from pydantic import BaseModel
 
 
-class ScoringPointResult(BaseModel):
-    """单个得分点的评分结果"""
-    point_id:    str
-    point_desc:  str
-    point_score: int
-    earned:      bool
-    evidence:    str   # earned=True 时填学员答案中对应原文
-    missing:     str   # earned=False 时填未得分原因
+class SymbolDrawingState(TypedDict, total=False):
+    """datasheet PDF → OrCAD Capture 符号的工作流状态。"""
 
+    task: str
+    mode: str
+    # ── 唯一必填输入 ────────────────────────────────────────────
+    pdf_path: str
+    #: 产物落盘目录；留空则用临时目录（源程序的 OUTPUT_DIR 是用户正式库，绝不自动写）
+    output_dir: str
 
-class SubjectiveReviewResult(BaseModel):
-    """简答题批改结果（LLM 结构化输出）"""
-    question_id:     str
-    student_answer:  str
-    total_score:     int
-    full_score:      int
-    confidence:      float       # [0, 1]，低于 0.7 时标记需复核
-    point_results:   list[ScoringPointResult]
-    overall_comment: str
+    # ── 人工回答（interrupt/resume 收下，与自动结果分开存）──────
+    human_device: dict[str, Any]
+    human_package: dict[str, Any]
+    human_conflicts: dict[str, Any]
+    human_review_diffs: dict[str, Any]
+    human_facts: dict[str, Any]
+    human_output: dict[str, Any]
+    human_history: list[dict[str, Any]]
+    needs_review: bool
 
+    # ── 定位与解析 ──────────────────────────────────────────────
+    #: ``pdf_locator.LocateResult`` 的 dict 形式（不含大字段）。
+    locate: dict[str, Any]
+    #: 送 MinerU 的页子集（1 起）。
+    slim_page_numbers: list[int]
+    #: MinerU 完整结果落盘后的目录；``content_list`` 从这里的 json 读。
+    document_dir: str
+    document_notes: list[str]
+    pin_page: int
+    #: 从引脚表解析出的引脚（``Pin`` 的 dict 形式）。
+    table_pins: list[dict[str, Any]]
+    table_warnings: list[str]
+    #: 候选型号与封装；来源是文件名、表单元格与正文线索。
+    device_candidates: list[str]
+    package_candidates: list[str]
+    package_hints: list[dict[str, Any]]
 
-class WeakPoint(BaseModel):
-    """单个知识薄弱点"""
-    tag:          str            # 知识点标签，如 "Spring IOC"、"Redis缓存穿透"
-    wrong_count:  int
-    total_count:  int
-    question_nos: list[int]      # 涉及的题目序号列表
-    suggestion:   str            # 针对该知识点的复习建议
+    # ── 视觉通道与合并 ──────────────────────────────────────────
+    figure_sides: dict[str, list[str]]
+    figure_page: int
+    merged_pins: list[dict[str, Any]]
+    conflicts: list[dict[str, Any]]
+    review: dict[str, Any]
 
+    # ── 自检 ────────────────────────────────────────────────────
+    check_report: dict[str, Any]
+    check_rounds: int
+    #: 降级说明（选页、缺视觉通道、跳过重复行等）。「降级要有痕迹」。
+    warnings: list[str]
+    #: 已渲染的引脚图页 ``[{"page": int, "path": str}]``。
+    rendered_pages: list[dict[str, Any]]
 
-class WeakPointsReport(BaseModel):
-    """知识薄弱点分析报告（LLM 结构化输出）"""
-    weak_points:     list[WeakPoint]
-    overall_summary: str         # 整体评价，不超过50字
+    # ── 布局与产物 ──────────────────────────────────────────────
+    layout: dict[str, Any]
+    capture: dict[str, Any]
+    artifact_paths: dict[str, str]
 
-
-class TeacherDecision(BaseModel):
-    """教师确认决策（interrupt 恢复时传入）"""
-    action:        str           # "approve" / "modify"
-    modifications: list[dict]    # [{question_id, new_score, comment}, ...]
-    teacher_id:    str
-    
-class ExamState(TypedDict):
-    """试卷批改 Agent 完整 State"""
-
-    # ── 请求上下文 ──────────────────────────────────────────────
-    messages:        Annotated[list[BaseMessage], add_messages]
-    student_id:      str
-    tenant_id:       str
-    session_id:      str
-    exam_id:         str         # 试卷 ID（exams 表）
-    submission_id:   str         # 提交记录 ID（exam_submissions 表）
-    word_file_path:  str         # 学员作答 Word 文件本地临时路径
-
-    # ── 解析结果 ───────────────────────────────────────────────
-    parsed_questions: list[dict] # 解析+DB合并后的完整题目列表
-
-    # ── 三轨批改结果 ────────────────────────────────────────────
-    objective_results:  list[dict]
-    subjective_results: list[dict]
-    code_results:       list[dict]
-
-    # ── 汇总预批改结果 ─────────────────────────────────────────
-    pre_review_summary: dict
-
-    # ── 知识薄弱点分析 ─────────────────────────────────────────
-    weak_points:         list[dict]
-    weak_points_summary: str
-
-    # ── Human-in-the-Loop ──────────────────────────────────────
-    teacher_notified:  bool
-    teacher_decision:  Optional[dict]
-
-    # ── 最终结果 ───────────────────────────────────────────────
-    final_results:     list[dict]
-    published:         bool
-
-    # ── 降级标记 ───────────────────────────────────────────────
-    fallback_used:     bool
-    structured_output: Optional[dict]
+    # ── 内部输出设置，不属于必填接口 ─────────────────────────────
+    work_dir: str
+    result: dict[str, Any]
+    status: str
+    errors: list[str]

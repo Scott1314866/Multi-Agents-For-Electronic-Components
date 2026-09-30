@@ -16,7 +16,7 @@ if sys.platform == "win32":
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.v1 import auth, step
+from backend.api.v1 import auth, pcb, step, symbol
 from backend.db.migrations import run_migrations
 
 
@@ -27,6 +27,8 @@ async def lifespan(app: FastAPI):
     # Durable answers and graph checkpoints are recovered under a per-job PG
     # lock; another live worker's job is skipped rather than executed twice.
     await step.recover_step_jobs()
+    await pcb.recover_pcb_jobs()
+    await symbol.recover_symbol_jobs()
     yield
     # 正常关闭时等待已接收的任务保存暂停点或执行结果。
     pending = tuple(step._background_tasks)
@@ -48,6 +50,8 @@ app.add_middleware(
 )
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["认证"])
 app.include_router(step.router, prefix="/api/v1/step", tags=["STEP 数模生成"])
+app.include_router(pcb.router, prefix="/api/v1/pcb", tags=["PCB 封装生成"])
+app.include_router(symbol.router, prefix="/api/v1/symbol", tags=["OrCAD 符号生成"])
 
 
 @app.get("/health", tags=["系统"])

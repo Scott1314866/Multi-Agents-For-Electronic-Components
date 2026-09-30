@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     # ── Web 搜索（Tavily 可选；留空则自动用免费的 DuckDuckGo）──
     tavily_api_key: str = "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"
 
+    # ── MinerU（OrCAD 符号生成用：datasheet PDF 的版面解析）──
+    # 迁移后的符号 Agent 只从这里取令牌，不再读仓库里的 MinerU_API_KEY.md。
+    mineru_api_key: str = ""  # 留空时符号 Agent 在真正需要联网时明确报错
+    mineru_base_url: str = "https://mineru.net/api/v4"
+
     # ── 应用基础配置 ──
     app_env: str = "local"  # 运行环境标识
     app_debug: bool = False  # 是否调试模式

@@ -34,7 +34,12 @@ def test_entrypoints_import_in_a_fresh_process_and_share_one_app():
 
 
 @pytest.mark.parametrize("module_name", ENTRYPOINTS)
-def test_entrypoint_routes_contain_only_implemented_auth_step_and_health(module_name):
+def test_entrypoint_routes_contain_only_implemented_apis(module_name):
+    """只挂已实现的接口 —— 别让 exam / interview / qa 的残骸复活。
+
+    pcb（PCB 封装生成）与 symbol（OrCAD 符号生成）现已实现，因此列入允许
+    前缀；而 resume / interview / exam / qa 仍然是被删掉的残骸模块。
+    """
     module = importlib.import_module(module_name)
     canonical = importlib.import_module("backend.step_main")
     assert module.app is canonical.app
@@ -46,12 +51,17 @@ def test_entrypoint_routes_contain_only_implemented_auth_step_and_health(module_
     assert "/api/v1/auth/me" in paths
     assert "/api/v1/step/drawings" in paths
     assert "/api/v1/step/drawings/{drawing_id}/human-input" in paths
+    assert "/api/v1/pcb/generate" in paths
+    assert "/api/v1/symbol/generate" in paths
     assert all(
-        path == "/health" or path.startswith(("/api/v1/auth/", "/api/v1/step/"))
+        path == "/health"
+        or path.startswith(
+            ("/api/v1/auth/", "/api/v1/step/", "/api/v1/pcb/", "/api/v1/symbol/")
+        )
         for path in paths
     )
     assert all(
-        not any(fragment in path for fragment in ("/resume", "/interview", "/symbol"))
+        not any(fragment in path for fragment in ("/resume", "/interview", "/exam", "/qa/"))
         for path in paths
     )
 
@@ -159,10 +169,25 @@ def test_shared_startup_preserves_selector_and_uvicorn_configuration(monkeypatch
 
 
 def test_obsolete_resume_linked_api_sources_are_deleted():
+    """exam / interview / resume 的残骸不得复活。
+
+    ``api/v1/symbol.py`` 曾经是 interview（模拟面试）的副本 —— 它现在被
+    **重写为 OrCAD 符号生成的接口**了，所以这里不再断言它不存在，改为断言
+    它里面不含任何面试残留。
+    """
     api_root = PROJECT_ROOT / "backend" / "api"
-    assert not (api_root / "v1" / "symbol.py").exists()
     assert not (api_root / "v1" / "verify_interview_e2e.py").exists()
     removed_symbols = ("resume_review_id", "resume_reviews", "seed_resume", "backend.agents.interview")
     for source in api_root.rglob("*.py"):
         contents = source.read_text(encoding="utf-8")
         assert not any(symbol in contents for symbol in removed_symbols), source
+
+    # 同一个位置的 symbol.py 现在是合法实现，但必须确实是"符号生成"，
+    # 而不是面试业务的换名副本。
+    # （注意别去查裸 "resume" —— LangGraph 的 Command(resume=...) 与
+    #   resume_input 都在正常用法里。）
+    symbol_source = (api_root / "v1" / "symbol.py").read_text(encoding="utf-8")
+    assert "backend.agents.symbol" in symbol_source
+    assert "invoke_postgres_symbol_graph" in symbol_source
+    assert "interview" not in symbol_source.lower()
+    assert "start_session" not in symbol_source.lower()
