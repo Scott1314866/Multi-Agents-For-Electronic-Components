@@ -50,6 +50,8 @@ class _Store:
         self.row = row
         self.lock = asyncio.Lock()
         self.statements = []
+        self.deleted = False
+        self.checkpoint_tables = {"checkpoints", "checkpoint_blobs", "checkpoint_writes"}
 
     def session(self):
         return _Session(self)
@@ -78,6 +80,10 @@ class _Session:
     async def execute(self, statement, params=None):
         sql = str(statement)
         self.store.statements.append((sql, dict(params or {})))
+        if "to_regclass" in sql:
+            return _Result(scalar=params["table"] if params["table"] in self.store.checkpoint_tables else None)
+        if sql.startswith("DELETE FROM checkpoint"):
+            return _Result()
         if params is None:
             assert "projection_sync_failed" in sql
             row = self.store.row
@@ -86,10 +92,18 @@ class _Session:
             await self.store.lock.acquire()
             self.locked = True
         row = self.store.row
-        if str(params["id"]) != str(row["id"]) or params["tenant_id"] != row["tenant_id"]:
+        if self.store.deleted or str(params["id"]) != str(row["id"]) or params["tenant_id"] != row["tenant_id"]:
+            return _Result()
+        if sql.startswith("DELETE FROM step_drawings"):
+            self.store.deleted = True
             return _Result()
         if sql.lstrip().startswith("SELECT"):
             return _Result(row=row)
+        if "event" in params:
+            logs = row["package_params"].setdefault("execution_logs", [])
+            logs.extend(json.loads(params["event"]))
+            row["package_params"]["execution_logs"] = logs[-600:]
+            return _Result()
         if "input_update" in params:
             if row["status"] != params["previous_status"]:
                 return _Result()
@@ -252,6 +266,172 @@ def test_cross_tenant_cannot_read_or_resume_checkpoint(harness):
         assert len(harness.reads) == count
         assert harness.row["status"] == "awaiting_input"
     asyncio.run(run())
+
+
+def test_execution_logs_survive_projection_and_are_tenant_scoped(harness):
+    async def run():
+        await harness.seed()
+        event = {"id": "event-one", "timestamp": "2026-10-08T07:00:00+00:00",
+                 "phase": "started", "message": "开始：识别图纸"}
+        await step._append_execution_log(str(harness.drawing_id), "tenant-a", event)
+        await step._append_execution_log(str(harness.drawing_id), "tenant-b", {**event, "id": "foreign-event"})
+        assert harness.row["package_params"]["execution_logs"] == [event]
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=harness.app), base_url="http://test") as client:
+            paused = (await client.get(harness.path)).json()
+            assert paused["execution_logs"] == [event]
+            response = await client.post(harness.path + "/human-input", json={
+                "interrupt_id": paused["pending_input"]["interrupt_id"], "answer": {"action": "auto"},
+            })
+            assert response.status_code == 202
+            await harness.drain()
+            job = (await client.get(harness.path)).json()
+            assert job["execution_logs"][0] == event
+            assert job["execution_logs"][-1]["phase"] == "completed"
+            assert job["result"]["human_history"]
+            harness.current["tenant_id"] = "tenant-b"
+            assert (await client.get(harness.path)).status_code == 404
+    asyncio.run(run())
+
+
+def test_light_poll_uses_durable_projection_without_reading_graph(harness):
+    async def run():
+        paused = await harness.seed()
+        harness.row["package_params"].update(checkpoint_id=paused["checkpoint_id"], next_nodes=paused["next_nodes"])
+        reads = len(harness.reads)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=harness.app), base_url="http://test") as client:
+            data = (await client.get(harness.path + "?include_checkpoint=false")).json()
+            assert len(harness.reads) == reads
+            assert data["checkpoint_metadata_source"] == "projection"
+            assert data["pending_input"]["interrupt_id"] == paused["interrupts"][0]["id"]
+            assert data["checkpoint_id"] == paused["checkpoint_id"]
+            await client.get(harness.path)
+            assert len(harness.reads) == reads + 1
+            harness.current["tenant_id"] = "tenant-b"
+            assert (await client.get(harness.path + "?include_checkpoint=false")).status_code == 404
+    asyncio.run(run())
+
+
+def test_retry_truncated_view_keeps_ocr_and_skips_earlier_stages(harness, monkeypatch):
+    calls = []
+    async def run():
+        failed = {"checkpoint_id": "failed-view", "next_nodes": [], "interrupts": [], "values": {
+            "status": "failed", "current_view_id": "view-1", "current_prompt_evidence": {"ocr_tokens": ["evidence"]},
+            "errors": ["Could not parse response content as the length limit was reached"],
+        }}
+        snapshots = [failed, {"checkpoint_id": "recovered", "next_nodes": [], "interrupts": [], "values": {
+            "status": "completed", "artifact_paths": {"step": "candidate.step"},
+        }}]
+        async def snapshot(*args):
+            return snapshots.pop(0)
+        async def resume(mode, job_id, updates, *, as_node):
+            calls.append((as_node, updates))
+        monkeypatch.setattr(step, "get_postgres_step_snapshot", snapshot)
+        monkeypatch.setattr(step, "resume_postgres_step_graph_at_node", resume)
+        harness.row["status"] = "ai_processing"
+        harness.row["package_params"]["retry_from_checkpoint"] = True
+        await _recover(harness)
+        assert calls == [("retrieve_view_evidence", {"status": "view_evidence_retrieved", "errors": [], "result": {}})]
+        assert not harness.captured
+        assert harness.row["status"] == "completed"
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("job_status", ["awaiting_input", "pending_review", "completed", "reviewed", "failed", "stopped", "rejected"])
+def test_delete_idle_session_removes_record_checkpoints_and_only_its_files(harness, tmp_path, job_status):
+    harness.row["status"] = job_status
+    job_dir = tmp_path / str(harness.drawing_id)
+    job_dir.mkdir()
+    (job_dir / "drawing.png").write_bytes(b"test drawing")
+    other_file = tmp_path / "another-session" / "keep.step"
+    other_file.parent.mkdir()
+    other_file.write_bytes(b"keep")
+    # A stored path outside the job directory must never become a delete target.
+    harness.row["source_image_path"] = str(other_file)
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=harness.app), base_url="http://test") as client:
+            response = await client.delete(harness.path)
+            assert response.status_code == 200
+            assert response.json() == {"drawing_id": str(harness.drawing_id), "deleted": True, "files_deleted": True}
+            assert (await client.get(harness.path)).status_code == 404
+            assert (await client.delete(harness.path)).status_code == 404
+            assert (await client.get(harness.path + "/artifacts/step")).status_code == 404
+    asyncio.run(run())
+    assert harness.store.deleted
+    assert not job_dir.exists()
+    assert other_file.read_bytes() == b"keep"
+    deletes = [(sql, params) for sql, params in harness.store.statements if sql.startswith("DELETE FROM checkpoint")]
+    assert len(deletes) == 3
+    for _, params in deletes:
+        assert params == {"thread_image": f"step:image:{harness.drawing_id}", "thread_drawing": f"step:drawing:{harness.drawing_id}"}
+
+
+@pytest.mark.parametrize("job_status", ["pending", "ai_processing"])
+def test_delete_processing_session_is_rejected(harness, job_status):
+    harness.row["status"] = job_status
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=harness.app), base_url="http://test") as client:
+            assert (await client.delete(harness.path)).status_code == 409
+    asyncio.run(run())
+    assert not harness.store.deleted
+    assert not harness.lock_modes
+
+
+def test_delete_other_tenant_session_does_not_touch_files_or_checkpoints(harness, tmp_path):
+    harness.row["status"] = "completed"
+    harness.current["tenant_id"] = "tenant-b"
+    job_dir = tmp_path / str(harness.drawing_id)
+    job_dir.mkdir()
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=harness.app), base_url="http://test") as client:
+            assert (await client.delete(harness.path)).status_code == 404
+    asyncio.run(run())
+    assert not harness.store.deleted and job_dir.exists()
+    assert not harness.lock_modes
+    assert not any(sql.startswith("DELETE") for sql, _ in harness.store.statements)
+
+
+def test_delete_session_rejects_an_active_worker_even_after_status_changes(harness):
+    harness.row["status"] = "awaiting_input"
+
+    async def run():
+        async with harness.worker_gate:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=harness.app), base_url="http://test") as client:
+                assert (await client.delete(harness.path)).status_code == 409
+    asyncio.run(run())
+    assert not harness.store.deleted
+
+
+def test_delete_session_without_checkpoint_tables(harness):
+    harness.row["status"] = "failed"
+    harness.store.checkpoint_tables.clear()
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=harness.app), base_url="http://test") as client:
+            assert (await client.delete(harness.path)).status_code == 200
+    asyncio.run(run())
+    assert harness.store.deleted
+    assert not any(sql.startswith("DELETE FROM checkpoint") for sql, _ in harness.store.statements)
+
+
+def test_delete_reports_file_cleanup_failure_without_restoring_session(harness, tmp_path, monkeypatch):
+    harness.row["status"] = "completed"
+    job_dir = tmp_path / str(harness.drawing_id)
+    job_dir.mkdir()
+
+    def locked_file(_path):
+        raise PermissionError("file in use")
+    monkeypatch.setattr(step.shutil, "rmtree", locked_file)
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=harness.app), base_url="http://test") as client:
+            response = await client.delete(harness.path)
+            assert response.status_code == 200
+            assert response.json()["files_deleted"] is False
+    asyncio.run(run())
+    assert harness.store.deleted and job_dir.exists()
 
 
 def test_concurrent_answers_are_claimed_once(harness):

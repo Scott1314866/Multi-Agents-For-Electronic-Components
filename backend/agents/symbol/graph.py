@@ -2,10 +2,10 @@
 
 一条主链，六个人工停点：
 
-    validate_input → locate_pages → parse_document → pick_table → discover_names
+    validate_input → locate_pages → parse_document → discover_names
       → ask_device ─┐
       → ask_package ─┤ 人工
-      → render_pages → vision_extract → merge_channels → review_pins
+      → pick_table → render_pages → vision_extract → merge_channels → review_pins
       → resolve_conflicts ─┐
       → resolve_review_diffs ─┤ 人工
       → self_check ⇄ ask_check_questions ─┤ 人工（最多 3 轮）
@@ -17,7 +17,8 @@
 * ``failed`` —— 技术失败；
 * ``stopped_no_pin_table`` —— 找不到可解析的引脚表，**不产出占位符号**；
 * ``stopped_offline`` —— MinerU 离线且无缓存；
-* ``stopped_no_toolchain`` —— 没有 ``tclsh.exe``，TCL 已生成、等有环境的机器。
+* ``stopped_no_toolchain`` —— 没有 ``tclsh.exe``，TCL 已生成、等有环境的机器；
+* ``stopped_check_failed`` —— 自检有错误，未生成符号。
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ from backend.agents.symbol.nodes import (
     route_continue_or_failed,
     self_check_node,
     stopped_no_pin_table_node,
+    stopped_check_failed_node,
     stopped_no_toolchain_node,
     stopped_offline_node,
     validate_input_node,
@@ -97,6 +99,7 @@ def build_symbol_graph(checkpointer=None):
     builder.add_node("stopped_no_pin_table", stopped_no_pin_table_node)
     builder.add_node("stopped_offline", stopped_offline_node)
     builder.add_node("stopped_no_toolchain", stopped_no_toolchain_node)
+    builder.add_node("stopped_check_failed", stopped_check_failed_node)
     builder.add_node("failed", failed_node)
 
     # ── 边 ───────────────────────────────────────────────────────
@@ -115,7 +118,7 @@ def build_symbol_graph(checkpointer=None):
         "parse_document",
         route_continue_or_failed,
         {
-            "continue": "pick_table",
+            "continue": "discover_names",
             "stopped_offline": "stopped_offline",
             "failed": "failed",
         },
@@ -124,7 +127,7 @@ def build_symbol_graph(checkpointer=None):
         "pick_table",
         route_continue_or_failed,
         {
-            "continue": "discover_names",
+            "continue": "render_pages",
             "stopped_no_pin_table": "stopped_no_pin_table",
             "failed": "failed",
         },
@@ -142,7 +145,7 @@ def build_symbol_graph(checkpointer=None):
     builder.add_conditional_edges(
         "ask_package",
         route_after_human_input,
-        {"continue": "render_pages", "cancelled": END},
+        {"continue": "pick_table", "cancelled": END},
     )
 
     for current, following in (
@@ -172,12 +175,12 @@ def build_symbol_graph(checkpointer=None):
     builder.add_conditional_edges(
         "self_check",
         route_after_self_check,
-        {"continue": "build_layout", "ask": "ask_check_questions", "failed": "failed"},
+        {"continue": "build_layout", "ask": "ask_check_questions", "failed": "failed", "stopped": "stopped_check_failed"},
     )
     builder.add_conditional_edges(
         "ask_check_questions",
         route_after_check_answer,
-        {"recheck": "self_check", "cancelled": END},
+        {"recheck": "self_check", "reextract": "pick_table", "cancelled": END},
     )
     builder.add_conditional_edges(
         "build_layout",
@@ -203,6 +206,7 @@ def build_symbol_graph(checkpointer=None):
     builder.add_edge("stopped_no_pin_table", END)
     builder.add_edge("stopped_offline", END)
     builder.add_edge("stopped_no_toolchain", END)
+    builder.add_edge("stopped_check_failed", END)
     builder.add_edge("failed", END)
 
     return builder.compile(

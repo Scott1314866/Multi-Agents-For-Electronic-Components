@@ -3,8 +3,8 @@
 链路（对应源程序的 ``pipeline.discover`` + ``pipeline.run``，但拆成了可单独
 暂停、单独重试的单元）：
 
-    validate_input → locate_pages → parse_document → pick_table → discover_names
-      → [ask_device] → [ask_package] → render_pages → vision_extract
+    validate_input → locate_pages → parse_document → discover_names
+      → [ask_device] → [ask_package] → pick_table → render_pages → vision_extract
       → merge_channels → review_pins → [resolve_conflicts] → [resolve_review_diffs]
       → self_check → [ask_check_questions] → build_layout → [confirm_output]
       → generate_capture → finalize
@@ -32,10 +32,10 @@ from backend.agents.symbol.contracts.models import Conflict, Evidence, Pin
 from backend.agents.symbol.contracts.pdf_locator import figure_pages, locate, slim_pages
 from backend.agents.symbol.contracts.pipeline import best_table, guess_device
 from backend.agents.symbol.contracts.selfcheck import check as run_selfcheck
-from backend.agents.symbol.tools.capture import generate as capture_generate
+from backend.agents.symbol.tools.capture import CaptureToolchainUnavailable, generate as capture_generate
 from backend.agents.symbol.tools.mineru import MineruOfflineError
 from backend.agents.symbol.tools.render import render_page
-from backend.agents.symbol.tools.review import review_pins
+from backend.agents.symbol.tools.review import ReviewMismatch, ReviewResult, review_pins
 from backend.agents.symbol.tools.vision import VisionClient
 from backend.agents.symbol.workers import capture_node, network_node, render_node
 from backend.core.logger import get_logger
@@ -129,6 +129,17 @@ async def validate_input_node(state: dict[str, Any]) -> dict[str, Any]:
         return {"errors": _errors(state, str(exc)), "status": "failed"}
 
 
+@render_node
+def _locate_pages(pdf: str, strict: bool):
+    located = locate(pdf)
+    return located, slim_pages(located, pdf, limit=SLIM_PAGE_LIMIT, strict=strict)
+
+
+@render_node
+def _figure_pages(pdf: str, candidates: list[int], package: str):
+    return figure_pages(pdf, candidates, package)
+
+
 async def locate_pages_node(state: dict[str, Any]) -> dict[str, Any]:
     """定位引脚段与封装段，并算出送 MinerU 的页子集。
 
@@ -139,8 +150,7 @@ async def locate_pages_node(state: dict[str, Any]) -> dict[str, Any]:
     try:
         pdf = state["pdf_path"]
         strict = bool(state.get("strict_pages"))
-        located = locate(pdf)
-        plan = slim_pages(located, pdf, limit=SLIM_PAGE_LIMIT, strict=strict)
+        located, plan = await _locate_pages(pdf, strict)
         return {
             "locate": located.to_dict(),
             "slim_page_numbers": list(plan.pages),
@@ -208,10 +218,11 @@ async def pick_table_node(state: dict[str, Any]) -> dict[str, Any]:
         located = state.get("locate") or {}
         targets = (located.get("targets") or {}).get("pins") or []
 
-        found = best_table(content, targets, package=str(state.get("package") or ""))
+        selection = {"package": str(state.get("package") or ""), "device": str(state.get("device") or "")}
+        found = best_table(content, targets, **selection)
         if found is None and targets:
             # 候选页都没表 —— 退回全档（源程序的 _retry_full_document）。
-            found = best_table(content, None, package=str(state.get("package") or ""))
+            found = best_table(content, None, **selection)
             if found is not None:
                 logger.info("symbol.table.fallback_full_document")
         if found is None:
@@ -249,16 +260,12 @@ async def discover_names_node(state: dict[str, Any]) -> dict[str, Any]:
         content = json.loads((doc_dir / "content_list.json").read_text(encoding="utf-8"))
 
         hints = hints_from_text(content)
-        packages = [hint.label for hint in hints if hint.label]
+        packages = list(dict.fromkeys(hint.label for hint in hints if hint.label))
 
         devices: list[str] = []
-        from_name = guess_device(Path(state["pdf_path"]).name)
+        from_name = guess_device(state.get("original_filename") or Path(state["pdf_path"]).name)
         if from_name:
             devices.append(from_name)
-        for hint in hints:
-            if hint.label and hint.label not in packages:
-                packages.append(hint.label)
-
         return {
             "device_candidates": devices,
             "package_candidates": packages,
@@ -304,10 +311,10 @@ async def render_pages_node(state: dict[str, Any]) -> dict[str, Any]:
         package = str(state.get("package") or "")
         candidates = list((located.get("targets") or {}).get("pins") or [])
         try:
-            ranked = figure_pages(pdf, candidates, package) or candidates
+            ranked = await _figure_pages(pdf, candidates, package) or candidates
         except Exception:
             ranked = candidates
-        wanted = ranked[:MAX_FIGURE_PAGES] or [state.get("pin_page") or 1]
+        wanted = list(dict.fromkeys(ranked))[:MAX_FIGURE_PAGES] or [state.get("pin_page") or 1]
 
         out_dir = _work_dir(state) / "pages"
         rendered = []
@@ -406,7 +413,7 @@ async def review_pins_node(state: dict[str, Any]) -> dict[str, Any]:
             pages[0]["path"],
             str(state.get("device") or ""),
             pins,
-            int(state.get("pin_page") or 0),
+            int(pages[0]["page"]),
         )
         return {
             "review": {
@@ -460,30 +467,46 @@ async def self_check_node(state: dict[str, Any]) -> dict[str, Any]:
         package_hints = [
             PackageHint(**item) for item in (state.get("package_hints") or [])
         ]
+        raw_review = state.get("review") or {}
+        review = None
+        if raw_review and not raw_review.get("skipped"):
+            review = ReviewResult(
+                mismatches=[
+                    ReviewMismatch(**{key: item[key] for key in ("pin_number", "field", "expected", "observed")})
+                    for item in raw_review.get("mismatches") or []
+                    if item.get("resolved") is None
+                ],
+                missing=list(raw_review.get("missing") or []),
+                extra=list(raw_review.get("extra") or []),
+                notes=str(raw_review.get("notes") or ""),
+            )
 
         report = run_selfcheck(
             pins,
             package=str(state.get("package") or ""),
             device=str(state.get("device") or ""),
-            layout=None,  # 布局前的自检；布局后的复检在 capture 之后
-            review=None,
+            layout=None,  # 布局前检查原始侧别；Capture 单独验证产物。
+            review=review,
             conflicts=conflicts,
             table_warnings=list(state.get("table_warnings") or []),
             capture_passed=None,
             files=None,
-            package_names=list(state.get("package_candidates") or []),
+            # ask_package 已确认的值不再因候选缺失重复发问；脚数检查仍照常跑。
+            package_names=None if state.get("human_package") is not None else list(state.get("package_candidates") or []),
             package_hints=package_hints,
-            sides_evaluated=bool(state.get("figure_sides")),
+            sides_evaluated=True,
             pdf_stem=Path(state.get("pdf_path") or "").stem,
         )
         payload = report.to_dict()
         # 人工已回答过的问题不再重复问。
-        answered = set((state.get("check_report") or {}).get("answered", {}))
-        if answered:
-            payload["questions"] = [
-                item for item in (payload.get("questions") or [])
-                if item.get("key") not in answered
-            ]
+        answered = dict((state.get("check_report") or {}).get("answered") or {})
+        payload["answered"] = answered
+        questions = {
+            finding.question.key: finding.to_dict()["question"]
+            for finding in report.questions
+            if finding.question and finding.question.key not in answered
+        }
+        payload["questions"] = list(questions.values())
         logger.info(
             "symbol.self_check",
             verdict=payload.get("verdict"),
@@ -567,9 +590,13 @@ async def generate_capture_node(state: dict[str, Any]) -> dict[str, Any]:
             },
             "status": "capture_ok" if result.passed else "capture_failed",
         }
-    except FileNotFoundError as exc:
+    except CaptureToolchainUnavailable as exc:
         logger.warning("symbol.toolchain_missing", error=str(exc))
-        return {"errors": _errors(state, str(exc)), "status": "stopped_no_toolchain"}
+        return {
+            "capture": {"passed": False, "script": str(exc.script)},
+            "artifact_paths": {"tcl": str(exc.script)},
+            "errors": _errors(state, str(exc)), "status": "stopped_no_toolchain",
+        }
     except Exception as exc:
         logger.error("symbol.capture.failed", exc_info=True)
         return {"errors": _errors(state, f"Capture 生成失败：{exc}"), "status": "failed"}
@@ -599,7 +626,7 @@ async def finalize_node(state: dict[str, Any]) -> dict[str, Any]:
             "score": report.get("score"),
             "confidence": report.get("confidence"),
             "artifacts": artifacts,
-            "warnings": list(state.get("table_warnings") or []),
+            "warnings": [*(state.get("warnings") or []), *(state.get("table_warnings") or []), *layout.get("warnings", [])],
         },
     }
 
@@ -616,7 +643,9 @@ def _stop_result(state: dict[str, Any], status: str, reason: str) -> dict[str, A
             "device": state.get("device", ""),
             "reason": reason,
             "check_report": state.get("check_report", {}),
-            "warnings": list(state.get("table_warnings") or []),
+            "verdict": (state.get("check_report") or {}).get("verdict"),
+            "score": (state.get("check_report") or {}).get("score"),
+            "warnings": [*(state.get("warnings") or []), *(state.get("table_warnings") or [])],
         },
     }
 
@@ -639,8 +668,15 @@ async def stopped_offline_node(state: dict[str, Any]) -> dict[str, Any]:
 async def stopped_no_toolchain_node(state: dict[str, Any]) -> dict[str, Any]:
     """没有 tclsh：TCL 已生成，等有 Cadence 的机器。"""
     payload = _stop_result(state, "stopped_no_toolchain", "本机没有 tclsh.exe")
-    payload["result"]["generated_files"] = {"tcl": (state.get("capture") or {}).get("script", "")}
+    artifacts = state.get("artifact_paths") or {}
+    payload["artifact_paths"] = artifacts
+    payload["result"]["artifacts"] = artifacts
+    payload["result"]["generated_files"] = artifacts
     return payload
+
+
+async def stopped_check_failed_node(state: dict[str, Any]) -> dict[str, Any]:
+    return _stop_result(state, "stopped_check_failed", "自检仍有错误，未生成符号；请修正输入后重跑")
 
 
 async def failed_node(state: dict[str, Any]) -> dict[str, Any]:
@@ -686,12 +722,16 @@ def route_after_self_check(state: dict[str, Any]) -> str:
     rounds = int(state.get("check_rounds") or 0)
     if (report.get("questions") or []) and rounds < MAX_CHECK_ROUNDS:
         return "ask"
+    if not report.get("ok", False):
+        return "stopped"
     return "continue"
 
 
 def route_after_check_answer(state: dict[str, Any]) -> str:
     if _status(state) == "cancelled":
         return "cancelled"
+    if _status(state) == "check_package_changed":
+        return "reextract"
     # 回答过就回到自检重跑，让 apply_answer 的效果体现出来。
     return "recheck"
 

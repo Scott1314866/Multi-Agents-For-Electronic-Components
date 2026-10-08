@@ -1,0 +1,2227 @@
+{
+  "device": "STM32F105VCT6",
+  "package": "LQFP100",
+  "package_full_name": "",
+  "source": {
+    "file": "D:\\WorkSpace\\Claude\\Module_01\\spike\\s_stm32_web\\702bb3679978.pdf",
+    "pages": [
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      82,
+      83,
+      84,
+      85,
+      86
+    ]
+  },
+  "pins": [
+    {
+      "pin_number": "1",
+      "name": "PE2",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 0,
+      "description": "PE2",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "2",
+      "name": "PE3",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 1,
+      "description": "PE3",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "3",
+      "name": "PE4",
+      "type": "IO",
+      "side": "left",
+      "side_order": 2,
+      "description": "PE4",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "4",
+      "name": "PE5",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 3,
+      "description": "PE5",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "5",
+      "name": "PE6",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 4,
+      "description": "PE6",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "6",
+      "name": "VBAT",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 5,
+      "description": "VBAT",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "7",
+      "name": "PC13-TAMPER-RTC(5)",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 6,
+      "description": "PC13(6)",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "8",
+      "name": "PC14-OSC32_IN(5)",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 7,
+      "description": "PC14(6)",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "9",
+      "name": "PC15-OSC32_OUT(5)",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 8,
+      "description": "PC15(6)",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "10",
+      "name": "Vss_5",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 9,
+      "description": "Vss_5",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "11",
+      "name": "VDD_5",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 10,
+      "description": "VDD_5",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "12",
+      "name": "OSC_IN",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 11,
+      "description": "OSC_IN",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "13",
+      "name": "OSC_OUT",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 12,
+      "description": "OSC_OUT",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "14",
+      "name": "NRST",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 13,
+      "description": "NRST",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "15",
+      "name": "PC0",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 14,
+      "description": "PC0",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "16",
+      "name": "PC1",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 15,
+      "description": "PC1",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "17",
+      "name": "PC2",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 16,
+      "description": "PC2",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "18",
+      "name": "PC3",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 17,
+      "description": "PC3",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "19",
+      "name": "VSSA",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 18,
+      "description": "VSSA",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "20",
+      "name": "VREF-",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 19,
+      "description": "VREF-",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "21",
+      "name": "VREF+",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 20,
+      "description": "VREF+",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "22",
+      "name": "VDDA",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 21,
+      "description": "VDDA",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "23",
+      "name": "PA0-WKUP",
+      "type": "IO",
+      "side": "left",
+      "side_order": 22,
+      "description": "PA0",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "24",
+      "name": "PA1",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 23,
+      "description": "PA1",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "25",
+      "name": "PA2",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 24,
+      "description": "PA2",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "26",
+      "name": "PA3",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 0,
+      "description": "PA3",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "27",
+      "name": "Vss_4",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 1,
+      "description": "Vss_4",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "28",
+      "name": "VDD_4",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 2,
+      "description": "VDD_4",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "29",
+      "name": "PA4",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 3,
+      "description": "PA4",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "30",
+      "name": "PA5",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 4,
+      "description": "PA5",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "31",
+      "name": "PA6",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 5,
+      "description": "PA6",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "32",
+      "name": "PA7",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 6,
+      "description": "PA7",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "33",
+      "name": "PC4",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 7,
+      "description": "PC4",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "34",
+      "name": "PC5",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 8,
+      "description": "PC5",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "35",
+      "name": "PB0",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 9,
+      "description": "PB0",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "36",
+      "name": "PB1",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 10,
+      "description": "PB1",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "37",
+      "name": "PB2",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 11,
+      "description": "PB2/BOOT1",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "38",
+      "name": "PE7",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 12,
+      "description": "PE7",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "39",
+      "name": "PE8",
+      "type": "IO",
+      "side": "bottom",
+      "side_order": 13,
+      "description": "PE8",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "40",
+      "name": "PE9",
+      "type": "IO",
+      "side": "bottom",
+      "side_order": 14,
+      "description": "PE9",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "41",
+      "name": "PE10",
+      "type": "IO",
+      "side": "bottom",
+      "side_order": 15,
+      "description": "PE10",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "42",
+      "name": "PE11",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 16,
+      "description": "PE11",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "43",
+      "name": "PE12",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 17,
+      "description": "PE12",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "44",
+      "name": "PE13",
+      "type": "IO",
+      "side": "bottom",
+      "side_order": 18,
+      "description": "PE13",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "45",
+      "name": "PE14",
+      "type": "IO",
+      "side": "bottom",
+      "side_order": 19,
+      "description": "PE14",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "46",
+      "name": "PE15",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 20,
+      "description": "PE15",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "47",
+      "name": "PB10",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 21,
+      "description": "PB10",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "48",
+      "name": "PB11",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 22,
+      "description": "PB11",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "49",
+      "name": "Vss_1",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 23,
+      "description": "Vss_1",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "50",
+      "name": "VDD_1",
+      "type": "PAS",
+      "side": "bottom",
+      "side_order": 24,
+      "description": "VDD_1",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "51",
+      "name": "PB12",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 24,
+      "description": "PB12",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "52",
+      "name": "PB13",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 23,
+      "description": "PB13",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "53",
+      "name": "PB14",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 22,
+      "description": "PB14",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "54",
+      "name": "PB15",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 21,
+      "description": "PB15",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "55",
+      "name": "PD8",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 20,
+      "description": "PD8",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "56",
+      "name": "PD9",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 19,
+      "description": "PD9",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "57",
+      "name": "PD10",
+      "type": "IO",
+      "side": "right",
+      "side_order": 18,
+      "description": "PD10",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "58",
+      "name": "PD11",
+      "type": "IO",
+      "side": "right",
+      "side_order": 17,
+      "description": "PD11",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "59",
+      "name": "PD12",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 16,
+      "description": "PD12",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "60",
+      "name": "PD13",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 15,
+      "description": "PD13",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "61",
+      "name": "PD14",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 14,
+      "description": "PD14",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "62",
+      "name": "PD15",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 13,
+      "description": "PD15",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "63",
+      "name": "PC6",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 12,
+      "description": "PC6",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "64",
+      "name": "PC7",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 11,
+      "description": "PC7",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "65",
+      "name": "PC8",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 10,
+      "description": "PC8",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "66",
+      "name": "PC9",
+      "type": "IO",
+      "side": "right",
+      "side_order": 9,
+      "description": "PC9",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "67",
+      "name": "PA8",
+      "type": "IO",
+      "side": "right",
+      "side_order": 8,
+      "description": "PA8",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "68",
+      "name": "PA9",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 7,
+      "description": "PA9",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "69",
+      "name": "PA10",
+      "type": "IO",
+      "side": "right",
+      "side_order": 6,
+      "description": "PA10",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "70",
+      "name": "PA11",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 5,
+      "description": "PA11",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "71",
+      "name": "PA12",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 4,
+      "description": "PA12",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "72",
+      "name": "PA13",
+      "type": "IO",
+      "side": "right",
+      "side_order": 3,
+      "description": "JTMS-SWDIO",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "73",
+      "name": "Not connected",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 2,
+      "description": "Not connected",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "74",
+      "name": "Vss_2",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 1,
+      "description": "Vss_2",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "75",
+      "name": "VDD_2",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 0,
+      "description": "VDD_2",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "76",
+      "name": "PA14",
+      "type": "IO",
+      "side": "top",
+      "side_order": 24,
+      "description": "JTCK-SWCLK",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "77",
+      "name": "PA15",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 23,
+      "description": "JTDI",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "78",
+      "name": "PC10",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 22,
+      "description": "PC10",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "79",
+      "name": "PC11",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 21,
+      "description": "PC11",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "80",
+      "name": "PC12",
+      "type": "IO",
+      "side": "top",
+      "side_order": 20,
+      "description": "PC12",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "81",
+      "name": "PD0",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 19,
+      "description": "PD0",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "82",
+      "name": "PD1",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 18,
+      "description": "PD1",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "83",
+      "name": "PD2",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 17,
+      "description": "PD2",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "84",
+      "name": "PD3",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 16,
+      "description": "PD3",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "85",
+      "name": "PD4",
+      "type": "IO",
+      "side": "top",
+      "side_order": 15,
+      "description": "PD4",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "86",
+      "name": "PD5",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 14,
+      "description": "PD5",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "87",
+      "name": "PD6",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 13,
+      "description": "PD6",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "88",
+      "name": "PD7",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 12,
+      "description": "PD7",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "89",
+      "name": "PB3",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 11,
+      "description": "JTDO",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "90",
+      "name": "PB4",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 10,
+      "description": "NJTRST",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "91",
+      "name": "PB5",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 9,
+      "description": "PB5",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "92",
+      "name": "PB6",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 8,
+      "description": "PB6",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "93",
+      "name": "PB7",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 7,
+      "description": "PB7",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "94",
+      "name": "BOOT0",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 6,
+      "description": "BOOT0",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "95",
+      "name": "PB8",
+      "type": "IO",
+      "side": "top",
+      "side_order": 5,
+      "description": "PB8",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "96",
+      "name": "PB9",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 4,
+      "description": "PB9",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "97",
+      "name": "PE0",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 3,
+      "description": "PE0",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "98",
+      "name": "PE1",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 2,
+      "description": "PE1",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "99",
+      "name": "Vss_3",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 1,
+      "description": "Vss_3",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "100",
+      "name": "VDD_3",
+      "type": "PAS",
+      "side": "top",
+      "side_order": 0,
+      "description": "VDD_3",
+      "evidence": [
+        {
+          "page": 26,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 26,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    }
+  ],
+  "conflicts": []
+}

@@ -15,6 +15,7 @@ import shutil
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
+from openai import LengthFinishReasonError
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -101,9 +102,11 @@ from backend.core.llm_factory import get_llm
 from backend.core.logger import get_logger
 from backend.config import get_settings
 from backend.agents.step.workers import cad_node, vision_node
+from backend.agents.step.progress import emit_progress
 
 
 logger = get_logger(__name__)
+REFERENCE_SEARCH_TIMEOUT_SECONDS = 20.0
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 GOLDEN_REFERENCE_STEPS = {
     "connector/cn/dsub_connector": (
@@ -994,8 +997,8 @@ async def qwen_analyze_one_view_node(state: dict[str, Any]) -> dict[str, Any]:
             region_id=region_id,
             view_type=view_type,
             family_id=family_id,
-            family_contract=json.dumps(family_contract, ensure_ascii=False),
-            view_evidence=json.dumps(evidence, ensure_ascii=False),
+            family_contract=json.dumps(family_contract, ensure_ascii=False, separators=(",", ":")),
+            view_evidence=json.dumps(evidence, ensure_ascii=False, separators=(",", ":")),
         )
         if family_id == qfn_ufqfpn.FAMILY_ID and view_type == "dimension_table":
             item = qfn_ufqfpn.semantics_from_table(
@@ -1480,12 +1483,7 @@ async def _invoke_qwen(
     *,
     image_path: Path | None = None,
 ) -> str:
-    """执行一次有 JSON 输出约束的 Qwen 调用，可附带区域总览图。"""
-    llm = get_llm("drawing_extract").bind(
-        max_tokens=1800,
-        response_format={"type": "json_object"},
-        extra_body={"enable_thinking": False},
-    )
+    """Get complete JSON; retry only truncation, with one bounded larger budget."""
     content: Any = user_prompt
     if image_path is not None:
         content = [
@@ -1495,14 +1493,30 @@ async def _invoke_qwen(
                 "image_url": {"url": image_as_data_url(image_path)},
             },
         ]
-    response = await asyncio.wait_for(
-        llm.ainvoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=content),
-        ]),
-        timeout=90.0,
-    )
-    return _response_text(response)
+    messages = [
+        SystemMessage(content=system_prompt + "\nJSON 请紧凑输出，不缩进；说明只保留简短证据理由，勿复述输入。"),
+        HumanMessage(content=content),
+    ]
+    try:
+        async with asyncio.timeout(120):
+            for attempt, budget in enumerate((4096, 8192)):
+                llm = get_llm("drawing_extract").bind(
+                    max_tokens=budget, response_format={"type": "json_object"},
+                    extra_body={"enable_thinking": False},
+                )
+                try:
+                    response = await asyncio.wait_for(llm.ainvoke(messages), timeout=90)
+                    truncated = (getattr(response, "response_metadata", {}) or {}).get("finish_reason") == "length"
+                except LengthFinishReasonError:
+                    truncated = True
+                if not truncated:
+                    return _response_text(response)
+                if attempt == 0:
+                    logger.warning("step.image.model_output_truncated", output_budget=budget)
+                    await emit_progress("图纸分析输出较长，正在自动重试当前步骤。", phase="warning")
+    except TimeoutError as exc:
+        raise RuntimeError("图纸分析响应超时，可在原任务中重试当前步骤。") from exc
+    raise RuntimeError("图纸分析输出仍不完整，可在原任务中重试当前步骤。")
 
 
 def _view_family_contract(family_contract: dict[str, Any], view_type: str) -> dict[str, Any]:
@@ -2162,13 +2176,17 @@ async def search_reference_step_node(state: dict[str, Any]) -> dict[str, Any]:
         search_tokens, manufacturers, package_type
     )
     output_dir = Path(state["output_dir"])
-    report = await search_public_step_candidates(
-        identifiers=identifiers,
-        package_type=package_type,
-        output_dir=output_dir,
-        manufacturers=manufacturers,
-        package_code=package_code,
-    )
+    try:
+        report = await asyncio.wait_for(search_public_step_candidates(
+            identifiers=identifiers,
+            package_type=package_type,
+            output_dir=output_dir,
+            manufacturers=manufacturers,
+            package_code=package_code,
+        ), timeout=REFERENCE_SEARCH_TIMEOUT_SECONDS)
+    except TimeoutError:
+        report = {"status": "timeout", "candidates": [], "timeout_seconds": REFERENCE_SEARCH_TIMEOUT_SECONDS}
+        await emit_progress("参考模型检索等待超时，继续按图纸尺寸建模。", phase="warning")
     exact_candidates = [
         candidate
         for candidate in report.get("candidates", [])

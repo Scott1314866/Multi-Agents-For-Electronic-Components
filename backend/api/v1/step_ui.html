@@ -1,0 +1,723 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STEP 工程台 · Component Foundry</title>
+  <style>
+    :root { color-scheme: light; --ink:#17231f; --muted:#65716c; --paper:#f3f4ee; --white:#fff; --line:#dce1d9; --green:#b8f35a; --deep:#20352c; --orange:#ff784f; }
+    * { box-sizing:border-box } body { margin:0; min-height:100vh; background:var(--paper); color:var(--ink); font-family:Manrope,"Noto Sans SC",sans-serif; }
+    .shell { min-height:100vh; display:grid; grid-template-columns:minmax(300px, .88fr) 1.12fr; }
+    aside { background:var(--deep); color:#f3f5ee; padding:38px clamp(28px,5vw,76px); display:flex; flex-direction:column; justify-content:space-between; position:relative; overflow:hidden; }
+    aside:after { content:""; position:absolute; width:430px; height:430px; border:1px solid #ffffff20; border-radius:50%; right:-240px; bottom:-210px; box-shadow:0 0 0 34px #ffffff08,0 0 0 70px #ffffff06,0 0 0 110px #ffffff04; pointer-events:none; }
+    .brand { display:flex; align-items:center; gap:12px; font-size:12px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; }
+    .mark { width:30px;height:30px;border:1px solid var(--green);display:grid;place-items:center;color:var(--green);font-family:"DM Mono",monospace;font-size:15px; }
+    .eyebrow { font:11px "DM Mono",monospace; color:var(--green); letter-spacing:.18em; text-transform:uppercase; }
+    h1 { max-width:440px; font-size:clamp(40px,5vw,68px); line-height:1.02; letter-spacing:-.065em; margin:22px 0 20px; }
+    .intro { color:#bdc9c1; max-width:370px; line-height:1.85; font-size:14px; }
+    .steps { border-top:1px solid #ffffff24; padding-top:22px; display:grid; gap:15px; position:relative; z-index:1; }
+    .step { display:grid; grid-template-columns:26px 1fr; gap:12px; align-items:center; color:#b7c4bc; font-size:12px; }
+    .step b { width:25px;height:25px;border:1px solid #ffffff3a;border-radius:50%;display:grid;place-items:center;font:10px "DM Mono",monospace;color:var(--green); }
+    main { display:flex; align-items:center; justify-content:center; padding:48px 28px; }
+    .panel { width:min(620px,100%); }
+    .topline { display:flex; justify-content:space-between; align-items:center; margin-bottom:34px; }
+    .topline small { font:10px "DM Mono",monospace; color:var(--muted); letter-spacing:.13em; }
+    .secure { display:flex; align-items:center; gap:7px; color:#53655b; font-size:11px; }
+    .secure i { display:block;width:7px;height:7px;background:#71b044;border-radius:50%;box-shadow:0 0 0 4px #71b04420; }
+    .form-card { background:var(--white); border:1px solid var(--line); padding:clamp(22px,4vw,38px); box-shadow:0 20px 60px #263b2e0c; }
+    .form-title { font-size:20px; letter-spacing:-.03em; margin:0 0 6px; }
+    .hint { margin:0 0 24px; color:var(--muted); font-size:12px; line-height:1.7; }
+    .drop { min-height:170px; border:1px dashed #aebbb0; background:#f8faf5; display:grid; place-items:center; text-align:center; padding:20px; cursor:pointer; transition:.2s; }
+    .drop:hover,.drop.over { border-color:#52823b; background:#f3fae8; }
+    .upload-icon { width:40px;height:40px;border:1px solid #d5ded3;border-radius:50%;display:grid;place-items:center;margin:0 auto 11px;color:#4c7043;font-size:19px; }
+    .drop strong { font-size:13px; display:block; margin-bottom:4px; }
+    .drop span { color:var(--muted); font-size:11px; }
+    .drop input { display:none }
+    .file-meta { color:#4c7043!important; margin-top:8px; font:11px "DM Mono",monospace; }
+    label { display:block; font-size:12px; font-weight:700; margin:22px 0 8px; }
+    textarea,input[type=text],input[type=password],input[type=number],select { width:100%; border:1px solid var(--line); background:#fff; padding:12px 13px; color:var(--ink); font:13px inherit; outline:none; border-radius:0; }
+    textarea:focus,input:focus,select:focus { border-color:#7e9a72; box-shadow:0 0 0 3px #b8f35a35; }
+    textarea { min-height:88px; resize:vertical; line-height:1.6; }
+    .primary { margin-top:19px; border:0; background:var(--green); color:#1c2a20; padding:14px 18px; width:100%; font:700 13px Manrope,"Noto Sans SC",sans-serif; cursor:pointer; display:flex; align-items:center; justify-content:space-between; transition:background .2s,transform .2s; }
+    .primary:hover { background:#a9e947; transform:translateY(-1px) }.primary:disabled { opacity:.55;cursor:wait;transform:none }
+    .arrow { font:18px "DM Mono",monospace }
+    .auth { border-top:1px solid #e8ece5; margin-top:25px; padding-top:15px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .auth-fields { display:flex; gap:7px; flex:1 }.auth input { padding:9px 10px; font-size:11px; min-width:0; }
+    .auth button { border:1px solid var(--line);background:#fff;padding:9px 12px;font:600 11px inherit;cursor:pointer;white-space:nowrap; }
+    .auth-state { font-size:10px;color:var(--muted); }
+    #status { margin-top:16px; font-size:12px; line-height:1.75; color:#40534a; }
+    #status:empty { display:none }.status-box { background:#eef3e9;border-left:3px solid #7aab59;padding:13px 15px; }
+    .status-box.error { border-color:var(--orange);background:#fff1ed;color:#71331e; }
+    .artifact-button { border:0;background:none;padding:0;color:#28573c;font:700 12px Manrope,"Noto Sans SC",sans-serif;text-decoration:underline;cursor:pointer; }
+    .artifact-button:disabled { opacity:.55;cursor:wait; }
+    .preview-actions { display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 8px; }
+    .preview-actions button { border:1px solid var(--line);background:#fff;padding:7px 10px;color:#28573c;cursor:pointer;font:600 11px Manrope,"Noto Sans SC",sans-serif; }
+    .preview-image { display:block;width:100%;max-height:360px;object-fit:contain;background:#fff;border:1px solid var(--line); }
+    .artifact-error { color:#a04428;font-size:11px;margin:8px 0 0; }
+    .answers { margin-top:12px; padding:16px; background:#fbfcf9; border:1px solid var(--line); }
+    .answers h3 { font-size:13px;margin:0 0 8px }.answers p { font-size:12px;color:var(--muted);line-height:1.65; }
+    .answers .primary { margin-top:12px; padding:11px 14px; }
+    .dimension-intro { margin:10px 0 16px;padding:12px 14px;background:#f0f5e9;border-left:3px solid #7aab59;color:#35483b;font-size:12px;line-height:1.75; }
+    .dimension-list { display:grid;gap:10px; }
+    .dimension-field { padding:13px;background:#fff;border:1px solid var(--line); }
+    .dimension-title { display:flex;justify-content:space-between;gap:10px;align-items:flex-start;font-size:13px;font-weight:800;line-height:1.5; }
+    .dimension-unit { flex:none;color:#53655b;font:11px "DM Mono",monospace;background:#f1f4ee;padding:3px 6px; }
+    .dimension-help { margin:5px 0 9px!important;font-size:11px!important; }
+    .candidate-list { display:grid;gap:5px;margin:8px 0;color:#526057;font-size:11px; }
+    .candidate { display:flex;align-items:center;justify-content:space-between;gap:8px;background:#f7f8f4;padding:6px 8px; }
+    .candidate button { border:1px solid #dce1d9;background:#fff;color:#314638;padding:4px 8px;font:600 10px Manrope,"Noto Sans SC",sans-serif;cursor:pointer; }
+    .dimension-input { margin-top:8px; }
+    .dimension-input input { width:100%;border:1px solid var(--line);background:#fff;padding:11px 12px;color:var(--ink);font:14px Manrope,"Noto Sans SC",sans-serif;outline:none; }
+    .dimension-input input:focus { border-color:#7e9a72;box-shadow:0 0 0 3px #b8f35a35; }
+    .dimension-tech { margin-top:8px;color:#78827c;font-size:10px; }
+    .dimension-tech summary { cursor:pointer; }
+    .dimension-tech code { font:10px "DM Mono",monospace; }
+    .dimension-actions { display:grid;gap:8px;margin-top:12px; }
+    .dimension-actions .primary { margin-top:0; }
+    .conversation { margin-top:14px;border:1px solid var(--line);background:#f8faf6; }
+    .conversation-head { display:flex;justify-content:space-between;align-items:center;padding:11px 14px;border-bottom:1px solid var(--line);background:#fff; }
+    .conversation-head strong { font-size:12px; }
+    .conversation-head span { color:var(--muted);font:10px "DM Mono",monospace; }
+    .chat-messages { display:grid;gap:12px;max-height:330px;overflow:auto;padding:14px; }
+    .chat-message { max-width:88%;padding:10px 12px;font-size:12px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere; }
+    .chat-message.assistant { justify-self:start;background:#fff;border:1px solid #e4e9e1;color:var(--ink); }
+    .chat-message.user { justify-self:end;background:#e9f7d7;border:1px solid #d3e9b8;color:#243526; }
+    .chat-message.system { justify-self:center;max-width:100%;background:#eef1ed;color:#5b665f;font-size:11px;text-align:center; }
+    .chat-speaker { display:block;margin-bottom:3px;color:#69756d;font-size:10px;font-weight:800; }
+    .chat-compose { padding:0 14px 14px; }
+    .chat-state { margin:0 14px 12px;padding:8px 10px;background:#eef3e9;color:#526057;font-size:11px; }
+    .chat-state:empty { display:none }
+    .chat-compose .answers { margin-top:0; }
+    .recent { border-top:1px solid #e8ece5;margin-top:23px;padding-top:17px; }
+    .recent-head { display:flex;justify-content:space-between;align-items:center;margin-bottom:10px; }
+    .recent-head strong { font-size:12px }.recent-head span { font:10px "DM Mono",monospace;color:var(--muted); }
+    .job-row { display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid #eef0eb;font-size:11px; }
+    .job-label { min-width:0;color:#526057;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+    .job-row button { flex:none;border:1px solid var(--line);background:#fff;padding:7px 10px;font:600 10px Manrope,"Noto Sans SC",sans-serif;cursor:pointer; }
+    .job-actions { display:flex;gap:6px;flex:none; }
+    .job-actions button { flex:none;border:1px solid var(--line);background:#fff;padding:7px 10px;font:600 10px Manrope,"Noto Sans SC",sans-serif;cursor:pointer; }
+    .job-note { margin:-3px 0 8px;color:#71331e;background:#fff6f1;padding:8px 10px;font-size:10px;line-height:1.6; }
+    .job-note:empty { display:none }
+    .retry-button { margin-top:12px;border:1px solid #d2a18f;background:#fff7f3;color:#773c28;padding:9px 12px;font:700 11px Manrope,"Noto Sans SC",sans-serif;cursor:pointer; }
+    [hidden] { display:none!important; }
+    .login-sheet { min-height:100dvh;display:grid;grid-template-columns:minmax(340px,1fr) minmax(360px,1fr); }
+    .login-hero { min-height:100dvh; }
+    .login-main { background:#f3f4ee; }
+    .login-panel { width:min(430px,100%);padding:38px 42px;background:#fff;border:1px solid var(--line);box-shadow:0 24px 70px #263b2e0e; }
+    .login-panel .eyebrow { color:#557b3d; }
+    .login-panel h2 { margin:16px 0 8px;font-size:32px;letter-spacing:-.05em; }
+    .login-panel p { font-size:12px;line-height:1.8;color:var(--muted); }
+    .login-panel label { margin-top:23px; }
+    #login-feedback:not(:empty) { margin-top:15px;padding:10px 12px;background:#fff1ed;color:#8d3f27;font-size:12px; }
+    .workspace-sheet { height:100dvh;min-height:560px;display:grid;grid-template-columns:280px minmax(0,1fr);background:#f6f7f2; }
+    .session-sidebar { min-width:0;min-height:0;padding:24px 17px 17px;background:var(--deep);display:flex;flex-direction:column;overflow:hidden; }
+    .session-sidebar:after { display:none; }
+    .session-sidebar .brand { padding:0 9px;font-size:10px;letter-spacing:.1em;white-space:nowrap; }
+    .new-session { width:100%;margin:30px 0 22px;padding:12px 14px;border:1px solid #8eaa8d;background:#ffffff0d;color:#f2f7e9;text-align:left;font:700 12px Manrope,"Noto Sans SC",sans-serif;cursor:pointer; }
+    .new-session:hover { background:#ffffff1c; }
+    .session-heading { display:flex;justify-content:space-between;padding:0 9px 10px;color:#dce9dc;font-size:11px;font-weight:800; }
+    .session-heading span { color:#8eaa97;font:9px "DM Mono",monospace; }
+    .session-sidebar .recent { min-height:0;flex:1;display:block;overflow-y:auto;border-top:1px solid #ffffff22;margin:0;padding:8px 0 0;position:relative;z-index:1; }
+    .session-sidebar .job-row { display:block;border:0;padding:0; }
+    .session-sidebar .session-item { display:block;width:100%;border:0;padding:11px 10px;background:transparent;color:#d8e3d9;text-align:left;cursor:pointer; }
+    .session-sidebar .session-item:hover,.session-sidebar .session-item.active { background:#ffffff18; }
+    .session-sidebar .session-item.active { box-shadow:inset 3px 0 var(--green); }
+    .session-sidebar .job-row { display:flex;align-items:stretch; }
+    .session-sidebar .session-item { flex:1;min-width:0; }
+    .session-sidebar .session-delete { flex:none;align-self:center;margin:0 5px;padding:7px 6px;border:1px solid #ffffff24;background:transparent;color:#d4b8ad;font:10px Manrope,"Noto Sans SC",sans-serif;cursor:pointer; }
+    .session-sidebar .session-delete:hover { background:#ff784f22;color:#ffd6c8;border-color:#ff784f80; }
+    .session-sidebar .session-delete:focus-visible { outline:2px solid var(--green);outline-offset:2px; }
+    .session-sidebar .session-delete:disabled { opacity:.5;cursor:wait; }
+    .session-title { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:700; }
+    .session-meta { display:flex;justify-content:space-between;gap:6px;color:#91a899;font:9px "DM Mono","Noto Sans SC",sans-serif;margin-top:5px; }
+    .session-sidebar .load-more { width:100%;padding:10px;border:0;background:#ffffff13;color:#dce9dc;cursor:pointer;font:11px Manrope,"Noto Sans SC",sans-serif; }
+    .sidebar-bottom { display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid #ffffff22;padding:15px 8px 0;color:#9bb39f;font-size:10px;position:relative;z-index:1; }
+    .sidebar-bottom button { border:0;background:none;color:#e5f1dc;cursor:pointer;font:600 10px Manrope,"Noto Sans SC",sans-serif; }
+    .workspace-main { min-width:0;min-height:0;padding:0;display:flex;flex-direction:column;align-items:stretch;justify-content:stretch;background:#f6f7f2; }
+    .workspace-header { flex:none;min-height:83px;padding:17px clamp(22px,4vw,60px);display:flex;align-items:center;justify-content:space-between;gap:14px;border-bottom:1px solid var(--line);background:#fff; }
+    .workspace-header .eyebrow { color:#65835a;font-size:9px; }
+    .workspace-header h2 { margin:4px 0 0;font-size:16px;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:min(60vw,650px); }
+    .workspace-content { width:min(100%,1060px);margin:0 auto;min-height:0;flex:1;display:flex;flex-direction:column; }
+    .workspace-content #status { min-height:0;flex:1;margin:0;overflow:hidden; }
+    #flash { flex:none;margin:10px clamp(20px,5vw,80px) 0;padding:9px 12px;background:#eef3e9;color:#40534a;font-size:11px; }
+    #flash.error { background:#fff1ed;color:#8d3f27; }
+    .workspace-content #status:empty { display:block; }
+    .workspace-content .conversation { height:100%;margin:0;border:0;background:transparent;display:flex;flex-direction:column; }
+    .workspace-content .conversation-head { flex:none;padding:12px clamp(20px,4vw,54px);background:#f6f7f2; }
+    .workspace-content .chat-messages { min-height:0;max-height:none;flex:1;padding:28px clamp(20px,5vw,80px);align-content:start; }
+    .workspace-content .chat-message { max-width:min(78%,690px);font-size:13px; }
+    .workspace-content .chat-compose { flex:none;padding:0 clamp(20px,5vw,80px) 12px;max-height:55vh;overflow:auto; }
+    .workspace-content .chat-state { flex:none;margin:0 clamp(20px,5vw,80px) 12px; }
+    .workspace-content .status-box { margin:18px clamp(20px,5vw,80px); }
+    .workspace-empty { height:100%;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;padding:50px clamp(25px,8vw,120px); }
+    .workspace-empty .eyebrow { color:#678b55; }
+    .workspace-empty h2 { font-size:clamp(30px,4vw,54px);line-height:1.12;letter-spacing:-.055em;margin:18px 0 12px; }
+    .workspace-empty p { max-width:500px;color:var(--muted);font-size:13px;line-height:1.9; }
+    .composer { flex:none;padding:14px clamp(20px,5vw,80px) 20px;border-top:1px solid var(--line);background:#fff; }
+    .composer-attachment { display:inline-flex;align-items:center;max-width:100%;margin-bottom:9px;padding:6px 10px;background:#eaf5dc;color:#345536;font:11px "DM Mono","Noto Sans SC",sans-serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+    .composer-row { display:flex;align-items:flex-end;gap:12px;padding:9px;border:1px solid #cdd9c9;background:#fff; }
+    .composer-row.over { border-color:#659e44;background:#f7fbea; }
+    .composer-row textarea { flex:1;min-width:0;min-height:44px;max-height:150px;padding:10px 2px;border:0;box-shadow:none;resize:vertical;font-size:13px; }
+    .composer-row textarea:focus { box-shadow:none;border:0; }
+    .attach-button,.send-button { flex:none;width:42px;height:42px;border:0;display:grid;place-items:center;cursor:pointer; }
+    .attach-button { background:#eff3e9;color:#294332;font-size:25px;line-height:1; }
+    .attach-button:hover { background:#e2efd3; }
+    .send-button { background:var(--green);color:#1f3323;font-size:22px; }
+    .send-button:disabled { opacity:.5;cursor:wait; }
+    .composer-hint { padding-top:7px;color:#829086;font-size:10px; }
+    @media(max-width:800px) { .shell{grid-template-columns:1fr} aside{min-height:310px;padding:25px 28px 28px} aside h1{font-size:42px;max-width:480px;margin:16px 0 12px} .intro{font-size:12px} .steps{grid-template-columns:repeat(3,1fr);gap:8px;margin-top:25px}.step{grid-template-columns:24px 1fr;font-size:10px;gap:7px} main{padding:28px 18px 42px} }
+    @media(max-width:470px) { .auth{align-items:stretch;flex-direction:column}.auth-fields{flex-direction:column}.auth button{width:100%}.topline{margin-bottom:20px} }
+    @media(max-width:800px) { .login-sheet{grid-template-columns:1fr}.login-hero{min-height:260px;padding:24px 28px}.login-hero h1{font-size:40px}.login-hero .steps{display:none}.login-main{padding:30px 18px}.workspace-sheet{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}.session-sidebar{height:auto;min-height:0;padding:12px 16px}.session-sidebar .brand{display:none}.session-sidebar .new-session{margin:0 0 10px}.session-heading{display:none}.session-sidebar .recent{display:flex;gap:6px;overflow-x:auto;overflow-y:hidden;max-height:65px;padding:0;border:0}.session-sidebar .job-row{flex:none;min-width:150px;max-width:220px}.session-sidebar .sidebar-bottom{padding:8px 0 0}.workspace-header{min-height:64px;padding:10px 18px}.workspace-content .chat-messages{padding:18px}.composer{padding:10px 18px 14px} }
+    @media(max-width:470px) { .login-panel{padding:28px 22px}.workspace-header .secure{display:none}.workspace-content .chat-message{max-width:94%}.workspace-content .conversation-head span{font-size:8px}.composer-row{gap:7px}.attach-button,.send-button{width:36px;height:36px} }
+    /* A continuous transcript, stable scroll position and a quiet composer. */
+    body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; }
+    .workspace-sheet { --ink:#27272a;--muted:#71717a;--line:#e9e9eb;--green:#27272a;grid-template-columns:252px minmax(0,1fr);background:#fff;min-height:0; }
+    .workspace-sheet button,.workspace-sheet input,.workspace-sheet textarea,.workspace-sheet select { font-family:inherit; }
+    .workspace-sheet .session-sidebar { background:#f7f7f8;color:var(--ink);padding:22px 12px 16px; }
+    .workspace-sheet .brand { letter-spacing:0;font-size:13px;font-weight:600; }.workspace-sheet .mark { border:0;color:var(--ink);background:#ececee;border-radius:9px;font-size:14px; }
+    .workspace-sheet .new-session { border:1px solid #e3e3e6;background:#fff;color:var(--ink);border-radius:10px;padding:12px;margin:24px 0 22px;font-size:13px;transition:background .16s; }.workspace-sheet .new-session:hover { background:#eeeef0; }
+    .workspace-sheet .session-heading { color:#808088;font-size:11px;font-weight:500; }.workspace-sheet .session-heading span { display:none; }.workspace-sheet .recent { border:0; }
+    .workspace-sheet .job-row { gap:2px;border-radius:9px;margin-bottom:3px; }.workspace-sheet .session-item { color:#45454b;border-radius:9px;padding:11px 10px;transition:background .16s; }
+    .workspace-sheet .session-item:hover,.workspace-sheet .session-item.active { background:#eaeaec;box-shadow:none; }.workspace-sheet .session-title { font-size:12px;font-weight:500; }.workspace-sheet .session-meta { color:#82828a;font-size:10px;margin-top:6px; }
+    .workspace-sheet .session-delete { color:#808088;border:0;border-radius:6px;margin:0;padding:8px 5px;background:none; }.workspace-sheet .session-delete:hover { color:#b34a3b;background:#f5e6e3; }
+    .workspace-sheet .load-more { color:#666670;background:#eeeef0;border-radius:8px; }.workspace-sheet .sidebar-bottom { color:#808088;border-color:#e4e4e7;font-size:11px; }.workspace-sheet .sidebar-bottom button { color:#55555e; }
+    .workspace-main { background:#fff; }.workspace-header { min-height:62px;padding:14px 28px;border-bottom:0; }.workspace-header .eyebrow { display:none; }.workspace-header h2 { font-size:14px;font-weight:500;margin:0; }
+    .workspace-header .secure { font-size:11px;color:#92929a; }.workspace-header .secure i { width:5px;height:5px;background:#8b9b8e;box-shadow:none; }
+    .workspace-content { width:min(100%,860px);position:relative; }.workspace-content .conversation { position:relative; }
+    .workspace-content .chat-messages { padding:24px 32px 32px;gap:25px;scrollbar-gutter:stable;overflow-anchor:none; }
+    .workspace-content .chat-message { max-width:100%;padding:0;font-size:14px;line-height:1.85;animation:message-in .18s ease-out; }
+    .workspace-content .chat-message.assistant { justify-self:stretch;border:0;background:none; }.workspace-content .chat-message.user { max-width:85%;padding:11px 16px;border:0;border-radius:18px;background:#f2f2f4;color:#303036; }
+    .workspace-content .chat-message.system { justify-self:start;text-align:left;background:none;color:#91919a;font-size:12px; }.chat-speaker { display:none; }
+    .chat-attachment { display:block;width:fit-content;margin-top:10px;border:1px solid #dedee3;background:#fff;border-radius:8px;padding:6px 10px;color:#73737e;font-size:12px;white-space:normal; }
+    .chat-tail { min-width:0; }.workspace-content .chat-state { margin:0;padding:6px 0;background:none;color:#878790;font-size:12px;display:flex;align-items:center;gap:9px; }
+    .chat-state::before { content:"";width:6px;height:6px;border-radius:50%;background:#92929b;animation:thinking 1.4s ease-in-out infinite; }
+    .execution-logs { margin:0 0 18px;color:#777780;font-size:12px; }
+    .execution-logs summary { width:fit-content;cursor:pointer;list-style:none;display:flex;align-items:center;gap:7px;padding:4px 0;color:#686872; }
+    .execution-logs summary::before { content:'›';display:inline-block;transition:transform .16s; }.execution-logs[open] summary::before { transform:rotate(90deg); }
+    .execution-logs ol { list-style:none;padding:6px 0 0;margin:0; }
+    .execution-log { display:flex;align-items:baseline;gap:10px;padding:4px 0;line-height:1.65; }
+    .execution-log time { flex-shrink:0;color:#a1a1aa;font:11px ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums; }
+    .execution-log .log-mark { flex-shrink:0;width:10px;text-align:center;color:#85858e; }.execution-log[data-phase="started"] .log-mark { color:#4b7ef7; }
+    .execution-log[data-phase="waiting"] .log-mark,.execution-log[data-phase="warning"] .log-mark { color:#a08248; }.execution-log[data-phase="error"] .log-mark { color:#b87568; }
+    .execution-log .log-text { min-width:0;overflow-wrap:anywhere; }.execution-log .log-duration { margin-left:auto;white-space:nowrap;color:#a1a1aa;font-size:11px; }
+    .log-earlier { display:block;border:0!important;background:none!important;color:#85858f!important;padding:8px 0!important;font-size:11px;cursor:pointer; }
+    .workspace-content .chat-compose { padding:0;max-height:none;overflow:visible; }.workspace-content .status-box,.workspace-content .answers { margin:0;padding:0;border:0;background:none;color:var(--ink); }
+    .workspace-content .status-box.error { background:none;border:0;color:#66514d; }.workspace-content .status-box p { margin:7px 0;font-size:13px;line-height:1.8; }
+    .answers h3 { display:none; }.answer-actions { display:flex;flex-wrap:wrap;gap:8px;margin-top:12px; }
+    .workspace-content .primary { width:auto;margin:0;padding:9px 14px;border:1px solid #dedee3;border-radius:9px;background:#fff;font-size:12px;font-weight:500;justify-content:center;gap:10px;color:#3b3b42; }
+    .workspace-content .primary:hover { transform:none;background:#f4f4f6; }.workspace-content .arrow { display:none; }
+    .workspace-content .answers input,.workspace-content .answers select { border-radius:9px;max-width:420px;font-size:13px; }.workspace-content .answers input:focus,.workspace-content .answers select:focus { border-color:#aaaab3;box-shadow:0 0 0 3px #27272a08; }
+    .dimension-intro { background:#f6f6f8;border:0;border-radius:10px;color:#676771;font-size:12px; }.dimension-field { border-radius:10px; }
+    .workspace-content .retry-button,.preview-actions button { border:1px solid #dedee3;border-radius:9px;background:#fff;color:#55555f;font-weight:500;padding:8px 12px; }.workspace-content .artifact-button { color:#373740; }.preview-image { border-radius:10px; }
+    .workspace-content .composer { border:0;background:#fff;padding:10px 32px 18px; }.composer-row { border-color:#e1e1e6;border-radius:20px;padding:8px 10px;background:#fafafb;gap:8px;transition:border-color .16s,box-shadow .16s; }
+    .composer-row:focus-within { border-color:#bcbcc5;box-shadow:0 2px 12px #18181b05; }.composer-row.over { background:#f0f0f3;border-color:#aaaab3; }
+    .composer-row textarea { background:transparent;min-height:44px;max-height:160px;resize:none;font-size:14px;padding:11px 4px;line-height:1.6; }
+    .attach-button { background:none;color:#777780;border-radius:50%;font-size:24px; }.attach-button:hover { background:#eeeef1; }.send-button { background:#303036;color:#fff;border-radius:50%;font-size:20px;transition:background .16s; }.send-button:hover { background:#50505a; }
+    .send-button { background:#4b7ef7; }.send-button:hover { background:#3b6fea; }
+    .send-button svg { width:22px;height:22px; }.send-square { display:none; }
+    .send-button[data-state="working"] .send-arrow { display:none; }.send-button[data-state="working"] .send-square { display:block; }
+    .send-button:disabled { opacity:1;cursor:default; }.send-button[data-state="working"] { cursor:progress;background:#4b7ef7; }
+    .send-button[data-state="waiting"] { background:#a4afc4; }
+    .composer-attachment { background:#f4f4f6;border:1px solid #e2e2e6;border-radius:8px;color:#72727c;font-family:inherit; }.composer-hint { text-align:center;color:#777780;font-size:11px;padding-top:9px; }
+    .workspace-empty { align-items:center;text-align:center;padding:35px; }.workspace-empty .eyebrow { display:none; }.workspace-empty h2 { font-size:28px;letter-spacing:-.03em;font-weight:500;margin:0 0 12px; }.workspace-empty p { font-size:13px;max-width:390px;line-height:1.8; }
+    #flash { margin:8px 32px;padding:8px 12px;border-radius:8px;background:#f6f6f8;color:#777780; }#flash.error { background:#faf3f1;color:#866259; }
+    .jump-latest { position:absolute;bottom:12px;left:50%;transform:translateX(-50%);padding:7px 13px;border:1px solid #e5e5e9;border-radius:20px;background:#fff;box-shadow:0 2px 8px #18181b0a;font-size:11px;color:#666670;cursor:pointer; }
+    .workspace-sheet button:focus-visible { outline:2px solid #9b9ba6;outline-offset:3px; }
+    @keyframes message-in { from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none} }@keyframes thinking { 0%,100%{opacity:.35}50%{opacity:1} }
+    @media(prefers-reduced-motion:reduce) { .workspace-content .chat-message,.chat-state::before { animation:none; }.workspace-sheet * { scroll-behavior:auto!important;transition:none!important; } }
+    @media(max-width:800px) { .workspace-sheet { grid-template-columns:1fr; }.workspace-sheet .session-sidebar { padding:10px 16px; }.workspace-sheet .new-session { margin:0 0 8px; }.workspace-header { padding:14px 20px;min-height:54px; }.workspace-content .chat-messages { padding:20px; }.workspace-content .composer { padding:10px 20px 16px; } }
+    @media(max-width:470px) { .workspace-content .chat-message.user { max-width:94%; }.workspace-content .chat-messages { padding:16px; }.workspace-content .composer { padding:8px 14px max(12px,env(safe-area-inset-bottom)); }.workspace-empty h2 { font-size:24px; }.attach-button,.send-button { width:44px;height:44px; }.workspace-content .primary { min-height:44px; } }
+  </style>
+</head>
+<body>
+  <section class="login-sheet" id="login-sheet">
+    <aside class="login-hero">
+      <div class="brand"><span class="mark">C</span> Component Foundry</div>
+      <div><div class="eyebrow">Image → solid model</div><h1>从工程图，<br>到可用的 STEP。</h1><p class="intro">上传元器件工程图，用自己的话描述需求。识别、建模与审核会保存在你的任务会话里。</p></div>
+      <div class="steps"><div class="step"><b>01</b><span>登录工作区</span></div><div class="step"><b>02</b><span>开始任务对话</span></div><div class="step"><b>03</b><span>审阅并下载 STEP</span></div></div>
+    </aside>
+    <main class="login-main"><section class="login-panel"><div class="eyebrow">PRIVATE WORKSPACE</div><h2>进入工作区</h2><p>登录后查看历史任务，或开始生成新的元器件模型。</p><form id="login-form"><label for="username">账号</label><input id="username" type="text" autocomplete="username" required placeholder="输入账号"><label for="password">密码</label><input id="password" type="password" autocomplete="current-password" required placeholder="输入密码"><button class="primary" id="login-button" type="submit"><span>登录工作区</span><span class="arrow">↗</span></button></form><div id="login-feedback" role="alert"></div></section></main>
+  </section>
+  <section class="workspace-sheet" id="workspace-sheet" hidden>
+    <aside class="session-sidebar"><div class="sidebar-top"><div class="brand"><span class="mark">C</span> Component Foundry</div><button id="new-session" class="new-session" type="button">＋ 新建对话</button><div class="session-heading">任务会话 <span>SESSIONS</span></div></div><nav class="recent" id="recent-jobs" aria-label="历史任务会话"></nav><div class="sidebar-bottom"><span id="auth-state">已连接到你的工作区</span><button id="logout-button" type="button">退出登录</button></div></aside>
+    <main class="workspace-main"><header class="workspace-header"><div><span class="eyebrow">STEP GENERATION / IMAGE MODE</span><h2 id="active-session-title">新建对话</h2></div><span class="secure"><i></i> 工作区连接</span></header><div class="workspace-content"><div id="status" role="status" aria-live="polite"></div><form id="generate-form" class="composer" aria-label="提交元器件工程图"><div class="composer-attachment" id="file-meta" hidden></div><div class="composer-row" id="dropzone"><button id="attach-button" class="attach-button" type="button" aria-label="添加工程图" title="添加工程图">＋</button><input id="drawing-file" type="file" accept="image/png,image/jpeg,image/bmp,image/tiff,image/webp" hidden><textarea id="message" maxlength="2000" required aria-label="任务描述" placeholder="描述你想生成的 STEP 模型，点击＋添加工程图…"></textarea><button class="send-button" id="submit-button" type="submit" aria-label="发送消息" title="发送消息" data-state="ready"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="send-arrow" d="M12 19V5m-6 6 6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect class="send-square" x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/></svg></button></div><div class="composer-hint">支持 PNG、JPG、BMP、TIFF、WEBP · 最大 25 MB</div></form></div></main>
+  </section>
+  <script>
+    const $ = (s) => document.querySelector(s);
+    let token = sessionStorage.getItem('step-access-token') || '';
+    let polling = null, pollGeneration = 0, activeSessionId = null, recentOffset = 0, recentLoading = false, recentHasMore = true, recentGeneration = 0;
+    const file = $('#drawing-file'), statusEl = $('#status'), loginButton = $('#login-button');
+    const flashEl=document.createElement('div');flashEl.id='flash';flashEl.hidden=true;flashEl.setAttribute('role','alert');statusEl.before(flashEl);
+    function authView() {
+      $('#login-sheet').hidden = !!token;
+      $('#workspace-sheet').hidden = !token;
+      if(token){renderEmptyWorkspace();loadRecentJobs(true);restoreLastJob();}
+      else{clearTimeout(polling);pollGeneration++;activeSessionId=null;statusEl.replaceChildren();flashEl.hidden=true;$('#password').value='';}
+    }
+    authView();
+    file.addEventListener('change', () => { const meta=$('#file-meta');meta.textContent=file.files[0]?`已添加图纸：${file.files[0].name}`:'';meta.hidden=!file.files[0]; });
+    $('#attach-button').addEventListener('click',()=>file.click());
+    $('#message').addEventListener('input',()=>resizeComposer());
+    $('#message').addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing&&!$('#submit-button').disabled){event.preventDefault();$('#generate-form').requestSubmit();}});
+    function resizeComposer(){const input=$('#message');input.style.height='auto';input.style.height=`${Math.min(160,Math.max(44,input.scrollHeight))}px`;}
+    function setSendState(state='ready'){
+      const button=$('#submit-button');button.dataset.state=state;button.disabled=state!=='ready';
+      const label=({ready:'发送消息',working:'正在处理',waiting:'请先完成上方确认'})[state];
+      button.setAttribute('aria-label',label);button.title=label;
+    }
+    function publicMessage(value,fallback='服务暂时无法处理，请稍后重试。'){
+      const message=String(value||'');
+      if(/length limit|CompletionUsage|LengthFinishReason|Could not parse response content/i.test(message))return '图纸分析输出不完整，可以在原任务中重试当前步骤。';
+      return /DeltaChannelHistory|cannot import name|site-packages|Traceback|ModuleNotFoundError|[A-Z]:\\|\b(?:API[_ ]?key|Bearer)\b/i.test(message)?fallback:message;
+    }
+    $('#new-session').addEventListener('click',()=>{
+      clearTimeout(polling);pollGeneration++;activeSessionId=null;localStorage.removeItem('step-last-drawing-id');
+      $('#message').value='';file.value='';file.dispatchEvent(new Event('change'));
+      setSendState('ready');markActiveSession();renderEmptyWorkspace();$('#message').focus();
+    });
+    $('#logout-button').addEventListener('click',()=>{token='';sessionStorage.removeItem('step-access-token');authView();});
+    const dz = $('#dropzone');
+    for (const name of ['dragenter','dragover']) dz.addEventListener(name, e => { e.preventDefault(); dz.classList.add('over'); });
+    for (const name of ['dragleave','drop']) dz.addEventListener(name, e => { e.preventDefault(); dz.classList.remove('over'); });
+    dz.addEventListener('drop', e => { if (e.dataTransfer.files.length) { file.files = e.dataTransfer.files; file.dispatchEvent(new Event('change')); } });
+    $('#login-form').addEventListener('submit', async (event) => {
+      event.preventDefault();loginButton.disabled=true;$('#login-feedback').textContent='';
+      try {
+        const response = await fetch('/api/v1/auth/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('#username').value,password:$('#password').value})});
+        const data = await response.json(); if (!response.ok) throw new Error(data.detail || '登录失败');
+        token = data.access_token; sessionStorage.setItem('step-access-token',token); authView();
+      } catch (err) { $('#login-feedback').textContent=err.message; }
+      finally{loginButton.disabled=false;}
+    });
+    function show(message, error=false) { message=publicMessage(message);if(!token){$('#login-feedback').textContent=message;return;}flashEl.textContent=message;flashEl.className=error?'error':'';flashEl.hidden=false; }
+    function renderEmptyWorkspace(){
+      setSendState('ready');
+      flashEl.hidden=true;$('#active-session-title').textContent='新建对话';$('#generate-form').hidden=false;
+      statusEl.innerHTML='<div class="workspace-empty"><span class="eyebrow">COMPONENT FOUNDRY / NEW SESSION</span><h2>从一张工程图开始。</h2><p>在下方描述你的需求，点击＋添加元器件工程图。每次提交都会建立独立任务会话，进度和人工回答会留在左侧历史中。</p></div>';
+    }
+    function markActiveSession(){for(const item of document.querySelectorAll('.session-item'))item.classList.toggle('active',item.dataset.sessionId===activeSessionId);}
+    function escapeHtml(value) { return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    async function fetchArtifact(url) {
+      if(!token)throw new Error('请先登录工作区，再下载或查看模型文件。');
+      const target=new URL(url,location.origin);
+      if(target.origin!==location.origin||!target.pathname.startsWith('/api/v1/step/drawings/'))throw new Error('文件地址无效。');
+      const response=await fetch(target.href,{headers:{Authorization:`Bearer ${token}`}});
+      if(!response.ok){
+        if(response.status===401){token='';sessionStorage.removeItem('step-access-token');authView();throw new Error('登录已过期，请重新登录工作区。');}
+        let detail='读取模型文件失败';try{detail=(await response.json()).detail||detail;}catch(_err){}
+        throw new Error(detail);
+      }
+      return response.blob();
+    }
+    function showArtifactError(container,message){
+      let note=container.querySelector('.artifact-error');
+      if(!note){note=document.createElement('p');note.className='artifact-error';container.append(note);}
+      note.textContent=publicMessage(message);
+    }
+    async function downloadStep(job,button){
+      button.disabled=true;
+      try{
+        const blob=await fetchArtifact(job.step_file_url);
+        if(!blob.size)throw new Error('STEP 文件为空，请检查任务产物。');
+        const objectUrl=URL.createObjectURL(blob);
+        const link=document.createElement('a');link.href=objectUrl;link.download=`${job.drawing_id}.step`;
+        document.body.append(link);link.click();link.remove();
+        setTimeout(()=>URL.revokeObjectURL(objectUrl),60000);
+      }catch(err){showArtifactError(button.parentElement,err.message);}finally{button.disabled=false;}
+    }
+    function addPreviewControls(container,urls){
+      const entries=Object.entries(urls||{});if(!entries.length)return;
+      const actions=document.createElement('div');actions.className='preview-actions';
+      const display=document.createElement('div');
+      const names={isometric:'等轴测图',front:'正视图',top:'俯视图',right:'右视图'};
+      for(const [view,url] of entries){
+        const button=document.createElement('button');button.type='button';button.textContent=`查看${names[view]||view}`;
+        button.addEventListener('click',async()=>{
+          button.disabled=true;
+          try{
+            const blob=await fetchArtifact(url);const objectUrl=URL.createObjectURL(blob);
+            const img=document.createElement('img');img.className='preview-image';img.alt=names[view]||view;
+            img.onload=()=>URL.revokeObjectURL(objectUrl);
+            img.onerror=()=>{URL.revokeObjectURL(objectUrl);showArtifactError(container,'预览图片无法显示。');};
+            img.src=objectUrl;display.replaceChildren(img);
+          }catch(err){showArtifactError(container,err.message);}finally{button.disabled=false;}
+        });
+        actions.append(button);
+      }
+      container.append(actions,display);
+    }
+    function readConversation(id){try{return JSON.parse(localStorage.getItem(`step-chat-${id}`)||'[]')}catch(_err){return []}}
+    function saveConversation(id,messages){const initial=messages.find(item=>item.key==='initial-request');const recent=messages.filter(item=>item.key!=='initial-request').slice(initial?-99:-100);localStorage.setItem(`step-chat-${id}`,JSON.stringify(initial?[initial,...recent]:recent))}
+    function appendConversation(id,role,key,text){const messages=readConversation(id);if(messages.some(item=>item.key===key))return;messages.push({role,key,text:String(text||'')});saveConversation(id,messages)}
+    function templateLabel(familyId){
+      return ({
+        'resistor/two_terminal_chip':'电阻 · 两端贴片封装',
+        'capacitor/two_terminal_chip':'电容 · 两端贴片封装',
+        'inductor':'电感', 'diode':'二极管', 'transistor':'晶体管',
+        'connector/cn/dsub_connector':'连接器 · 梯形接口连接器',
+        'connector/cn/pin_header':'连接器 · 排针',
+        'connector/mt':'连接器 · 结构物料',
+        'ic/gullwing_ic':'集成芯片 · 双侧鸥翼引脚封装',
+        'ic/quad_gullwing_ic':'集成芯片 · 四侧鸥翼引脚封装',
+        'ic/qfn_ufqfpn':'集成芯片 · 四侧无引脚封装',
+        'misc':'功率器',
+        'gullwing_ic':'集成芯片 · 双侧鸥翼引脚封装',
+        'quad_gullwing_ic':'集成芯片 · 四侧鸥翼引脚封装',
+        'dsub_connector':'连接器 · 梯形接口连接器', 'pin_header':'连接器 · 排针',
+        'ufqfpn':'集成芯片 · 四侧无引脚封装', 'ic/ufqfpn':'集成芯片 · 四侧无引脚封装'
+      })[familyId]||'其他封装模板';
+    }
+    function seedConversation(job){
+      const result=job.result||{},history=result.human_history||[];
+      // Old terminal messages describe an earlier attempt. The current result
+      // is rendered once below; stale tracebacks must never reappear in chat.
+      const cached=readConversation(job.drawing_id).filter(item=>!item.key?.startsWith('terminal:')&&(item.role==='user'||publicMessage(item.text,'')===item.text)).map(item=>{
+        if(item.role==='assistant'&&/Jev|implemented/.test(item.text))return {...item,text:'请确认使用的封装模板。'};
+        if(item.role==='user'&&item.key!=='initial-request'&&/^选择模板：[a-z_]+(?:\/[a-z_]+)*$/.test(item.text))return {...item,text:`选择模板：${templateLabel(item.text.slice(5))}`};
+        return item;
+      });
+      const request=result.human_request||job.human_request;
+      const filename=result.original_filename||job.original_filename;
+      const initial=request?{role:'user',key:'initial-request',text:filename?`${request}\n\n附件：${filename}`:request}:cached.find(item=>item.key==='initial-request');
+      const messages=cached.filter(item=>item.key!=='initial-request');
+      if(initial)messages.unshift(initial);
+      saveConversation(job.drawing_id,messages);
+      if(messages.filter(item=>item.role==='user'&&item.key!=='initial-request').length>=history.length)return;
+      if(cached.length)localStorage.removeItem(`step-chat-${job.drawing_id}`);
+      if(initial)appendConversation(job.drawing_id,initial.role,initial.key,initial.text);
+      history.forEach((item,index)=>{
+        const stage={package:'封装信息',routing:'模板选择',dimensions:'尺寸补充',review:'模型审核'}[item.stage]||'人工确认';
+        appendConversation(job.drawing_id,'assistant',`history-q-${index}`,`请确认${stage}。`);
+        appendConversation(job.drawing_id,'user',`history-a-${index}`,formatAnswer(item.stage,item));
+      });
+      for(const item of cached.filter(item=>item.key?.startsWith('question:')&&!cached.some(answer=>answer.key===`answer:${item.key.slice(9)}`)))appendConversation(job.drawing_id,item.role,item.key,item.text);
+      for(const item of cached.filter(item=>item.role==='system'))appendConversation(job.drawing_id,item.role,item.key,item.text);
+    }
+    function formatAnswer(stage,answer){
+      if(stage==='package')return answer.package_type?`封装：${answer.package_type}`:answer.action==='auto'?'同意系统自动识别封装':'取消任务';
+      if(stage==='routing')return answer.family_id?`选择模板：${templateLabel(answer.family_id)}`:answer.action==='confirm'?'确认系统推荐模板':'取消任务';
+      if(stage==='review')return answer.action==='approve'?'已批准模型':'拒绝模型';
+      const values=answer.values||{};const entries=Object.entries(values).map(([field,slot])=>`${dimensionNames[field]||field}：${typeof slot==='object'?slot.value:slot} ${typeof slot==='object'?(slot.unit||'mm'):'mm'}`);
+      return entries.join('；')||answer.comment||'已提交补充信息';
+    }
+    function executionLogRows(events){
+      executionLogRows.clock ||= new Intl.DateTimeFormat('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      return (Array.isArray(events)?events:[]).filter(item=>item&&typeof item.id==='string'&&typeof item.message==='string').slice(-600).map(item=>{
+        const date=new Date(item.timestamp),duration=item.duration_seconds;
+        return {id:item.id,phase:['started','completed','waiting','warning','error'].includes(item.phase)?item.phase:'info',
+          timestamp:item.timestamp,time:Number.isNaN(date.getTime())?'—':executionLogRows.clock.format(date),
+          text:publicMessage(item.message),duration:typeof duration==='number'&&Number.isFinite(duration)&&duration>=0?`${duration.toFixed(1)}s`:''};
+      });
+    }
+    function renderExecutionLogs(box,events){
+      const rawSignature=JSON.stringify([box.dataset.expanded,events]);if(box.dataset.rawSignature===rawSignature)return false;
+      const rows=executionLogRows(events),expanded=box.dataset.expanded==='true',visible=expanded?rows:rows.slice(-12);
+      const signature=JSON.stringify([expanded,rows]);if(box.dataset.signature===signature)return false;
+      if(!box.firstElementChild){
+        const summary=document.createElement('summary');const list=document.createElement('ol');list.setAttribute('role','log');list.setAttribute('aria-label','任务执行日志');
+        const earlier=document.createElement('button');earlier.type='button';earlier.className='log-earlier';
+        earlier.addEventListener('click',()=>{box.dataset.expanded=box.dataset.expanded==='true'?'false':'true';renderExecutionLogs(box,box._events);});
+        box.append(summary,list,earlier);
+      }
+      box.hidden=!rows.length;box._events=events;box.firstElementChild.textContent=`执行日志 · ${rows.length} 条`;
+      const list=box.querySelector('ol'),keys=new Set(visible.map(row=>row.id));
+      for(const row of Array.from(list.children))if(!keys.has(row.dataset.logId))row.remove();
+      const existing=new Map(Array.from(list.children,row=>[row.dataset.logId,row]));
+      visible.forEach((item,index)=>{
+        let row=existing.get(item.id);if(!row){
+          row=document.createElement('li');row.className='execution-log';row.dataset.logId=item.id;
+          const time=document.createElement('time'),mark=document.createElement('span'),text=document.createElement('span'),duration=document.createElement('span');
+          mark.className='log-mark';mark.setAttribute('aria-hidden','true');text.className='log-text';duration.className='log-duration';row.append(time,mark,text,duration);
+        }
+        const itemSignature=JSON.stringify(item);if(row.dataset.signature!==itemSignature){
+          row.dataset.phase=item.phase;row.children[0].textContent=item.time;if(item.time!=='—')row.children[0].dateTime=item.timestamp;
+          row.children[1].textContent=({started:'•',completed:'✓',waiting:'◦',warning:'!',error:'!'})[item.phase]||'·';
+          row.children[2].textContent=item.text;row.children[3].textContent=item.duration;row.dataset.signature=itemSignature;
+        }
+        if(list.children[index]!==row)list.insertBefore(row,list.children[index]||null);
+      });
+      const earlier=box.querySelector('.log-earlier');earlier.hidden=rows.length<=12;earlier.textContent=expanded?'收起此前日志':`查看此前 ${rows.length-12} 条日志`;
+      box.dataset.signature=signature;box.dataset.rawSignature=rawSignature;return true;
+    }
+    function renderConversation(job,composer=null,stateText=''){
+      activeSessionId=job.drawing_id;markActiveSession();
+      flashEl.hidden=true;
+      $('#active-session-title').textContent=(job.result||{}).human_request||job.human_request||'工程图转 STEP';
+      $('#generate-form').hidden=false;
+      setSendState(job.pending_input?'waiting':(['pending','ai_processing'].includes(job.status)||!job.status?'working':'ready'));
+      seedConversation(job);
+      let thread=statusEl.querySelector('.conversation');const fresh=!thread||thread.dataset.sessionId!==job.drawing_id;
+      if(fresh){
+        thread=document.createElement('section');thread.className='conversation';thread.dataset.sessionId=job.drawing_id;
+        const messages=document.createElement('div');messages.className='chat-messages';messages.setAttribute('aria-label','任务对话');
+        const tail=document.createElement('div');tail.className='chat-tail';const state=document.createElement('div');state.className='chat-state';state.hidden=true;
+        const logs=document.createElement('details');logs.className='execution-logs';logs.open=true;logs.hidden=true;
+        const area=document.createElement('div');area.className='chat-compose';tail.append(logs,state,area);messages.append(tail);
+        const jump=document.createElement('button');jump.type='button';jump.className='jump-latest';jump.textContent='↓ 回到最新';jump.hidden=true;
+        jump.addEventListener('click',()=>messages.scrollTo({top:messages.scrollHeight,behavior:scrollBehavior()}));
+        messages.addEventListener('scroll',()=>{jump.hidden=messages.scrollHeight-messages.scrollTop-messages.clientHeight<96;},{passive:true});
+        thread.append(messages,jump);statusEl.replaceChildren(thread);
+      }
+      const messages=thread.querySelector('.chat-messages'),tail=thread.querySelector('.chat-tail');
+      const oldScroll=messages.scrollTop,following=fresh||messages.scrollHeight-oldScroll-messages.clientHeight<96;
+      const history=readConversation(job.drawing_id),keys=new Set(history.map(item=>item.key));let changed=fresh;
+      for(const bubble of messages.querySelectorAll('.chat-message'))if(!keys.has(bubble.dataset.messageKey)){bubble.remove();changed=true;}
+      const existing=new Map(Array.from(messages.querySelectorAll('.chat-message'),bubble=>[bubble.dataset.messageKey,bubble]));
+      history.forEach((item,index)=>{
+        let bubble=existing.get(item.key);if(!bubble){bubble=document.createElement('div');bubble.dataset.messageKey=item.key;changed=true;}
+        const signature=JSON.stringify(item);
+        if(bubble.dataset.signature!==signature){
+          bubble.className=`chat-message ${item.role}`;bubble.replaceChildren();
+          const parts=item.key==='initial-request'?item.text.split('\n\n附件：'):[item.text];
+          const text=document.createElement('span');text.textContent=item.role==='user'?parts[0]:publicMessage(parts[0]);bubble.append(text);
+          if(parts.length>1){const attachment=document.createElement('span');attachment.className='chat-attachment';attachment.textContent=`附件 · ${parts.slice(1).join('\n\n附件：')}`;bubble.append(attachment);}
+          bubble.dataset.signature=signature;changed=true;
+        }
+        if(messages.children[index]!==bubble){messages.insertBefore(bubble,messages.children[index]||tail);changed=true;}
+      });
+      const events=job.execution_logs||(job.result||{}).execution_logs||[];
+      changed=renderExecutionLogs(tail.querySelector('.execution-logs'),events)||changed;
+      if(!composer&&events.at(-1)?.phase==='started')stateText=publicMessage(events.at(-1).message).replace(/^开始：/,'正在')+'…';
+      const revision=JSON.stringify([job.status,job.pending_input?.interrupt_id,job.pending_input?.validation_error,job.pending_input?.previous_answer,!!composer,stateText,job.error_msg,job.preview_urls]);
+      if(tail.dataset.revision!==revision){
+        const state=tail.querySelector('.chat-state'),area=tail.querySelector('.chat-compose');
+        state.textContent=publicMessage(stateText);state.hidden=!!composer||!stateText;
+        area.replaceChildren();if(composer)area.append(composer);tail.dataset.revision=revision;changed=true;
+      }
+      if(changed){if(!following)messages.scrollTop=oldScroll;else requestAnimationFrame(()=>{if(statusEl.firstElementChild===thread)messages.scrollTo({top:messages.scrollHeight,behavior:fresh?'instant':scrollBehavior()});});}
+    }
+    function scrollBehavior(){return window.matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth';}
+    $('#generate-form').addEventListener('submit', async e => {
+      e.preventDefault(); if($('#submit-button').disabled)return;if (!token) { show('请先登录工作区。',true); return; }
+      if (!file.files[0]) { show('请先选择一张工程图。',true); return; }
+      const submittedMessage=$('#message').value,submittedFile=file.files[0];
+      const body = new FormData(); body.append('message',submittedMessage); body.append('file',submittedFile);
+      setSendState('working'); show('正在提交图纸，Agent 即将开始处理…');
+      try {
+        const response = await fetch('/api/v1/step/generate',{method:'POST',headers:{Authorization:`Bearer ${token}`},body});
+        const data = await response.json(); if (!response.ok) { const error=new Error(data.detail || '提交失败');error.status=response.status;throw error; }
+        localStorage.setItem('step-last-drawing-id',data.drawing_id);
+        renderConversation({drawing_id:data.drawing_id,result:{human_request:submittedMessage,original_filename:submittedFile.name}},null,'图纸已提交，STEP Agent 正在开始处理…');
+        if($('#message').value===submittedMessage){$('#message').value='';resizeComposer();}
+        if(file.files[0]===submittedFile){file.value='';file.dispatchEvent(new Event('change'));}
+        activeSessionId=data.drawing_id;loadRecentJobs(true);
+        await poll(data.status_url);
+      } catch(err) { show(err.message,true); setSendState('ready'); }
+    });
+    async function poll(url) {
+      clearTimeout(polling);const generation=++pollGeneration;
+      const requestedId=url.match(/\/drawings\/([^/?]+)/)?.[1];if(requestedId){activeSessionId=decodeURIComponent(requestedId);markActiveSession();}
+      try {
+        const response = await fetch(`${url}${url.includes('?')?'&':'?'}include_checkpoint=false`,{headers:{Authorization:`Bearer ${token}`}}); const job=await response.json();
+        if(generation!==pollGeneration||!token)return;
+        if (!response.ok) throw new Error(job.detail || '读取任务状态失败');
+        if (job.drawing_id) localStorage.setItem('step-last-drawing-id',job.drawing_id);
+        if (job.status === 'completed' || job.status === 'reviewed') {
+          const result=document.createElement('div');result.className='status-box';result.append(document.createTextNode('生成完成。 '));
+          if(job.step_file_url){const button=document.createElement('button');button.className='artifact-button';button.type='button';button.textContent='下载 STEP 文件 ↗';button.addEventListener('click',()=>downloadStep(job,button));result.append(button);}
+          addPreviewControls(result,job.preview_urls);
+          renderConversation(job,result,'任务已完成');loadRecentJobs(true);return;
+        }
+        if (job.status === 'failed') { showFailure(job);loadRecentJobs(true);return; }
+        if (job.status === 'stopped' || job.status === 'rejected') { renderStoppedJob(job);loadRecentJobs(true);return; }
+        if (job.pending_input) { renderQuestion(job);loadRecentJobs(true); return; }
+        renderConversation(job,null,'正在处理图纸…'); polling=setTimeout(()=>poll(url),2500);
+      } catch(err) { if(generation!==pollGeneration||!token)return;show(err.message,true);if($('#submit-button').dataset.state==='working')polling=setTimeout(()=>poll(url),2500); }
+    }
+    function statusLabel(s) { return ({ai_processing:'处理中',awaiting_input:'等待补充信息',pending_review:'等待模型审核',completed:'已完成',reviewed:'审核通过',failed:'执行失败',stopped:'已停止',rejected:'已拒绝',cancelled:'已取消'})[s] || s; }
+    const dimensionNames={body_standoff:'本体离板高度',housing_height:'塑封本体高度',nominal_pin_count:'引脚总数',pin_span:'同一排引脚中心距',terminal_pitch:'引脚间距',terminal_length:'引脚脚长',terminal_thickness:'引脚金属厚度',total_height:'总体高度',overall_width:'包含引脚的整体宽度',body_width:'塑封本体宽度',body_length:'塑封本体长度',overall_length:'包含引脚的整体长度',terminal_width:'单只引脚宽度'};
+    function conflictName(value){
+      if(value.includes('pin_span')&&value.includes('pitch'))return '引脚中心距与引脚间距/数量不匹配';
+      if(value.includes('total_height')&&value.includes('housing_height'))return '总体高度与本体高度/离板高度不匹配';
+      if(value.includes('body_length')&&value.includes('pin_span'))return '塑封本体长度与引脚排列尺寸不匹配';
+      return value.replaceAll('pin_span','同排引脚中心距').replaceAll('pins_per_side','每侧引脚数').replaceAll('pitch','引脚间距').replaceAll('total_height','总体高度').replaceAll('housing_height','塑封本体高度').replaceAll('body_standoff','本体离板高度');
+    }
+    function stopDescription(job){
+      const stored=job.result||{};const detail=job.stop_reason||{graph_status:stored.graph_status,result_status:stored.result_status,evidence_report:stored.evidence_report,missing_fields:stored.missing_fields||[],conflicting_fields:stored.conflicting_fields||[]};const result=detail.result_status||'';
+      if(result==='stopped_insufficient_extraction'){
+        const fields=[...(detail.missing_fields||[]).map(x=>`缺少：${dimensionNames[x]||x}`),...(detail.conflicting_fields||[]).map(x=>`冲突：${conflictName(x)}`)];
+        return [detail.evidence_report||'尺寸证据不足或尺寸之间存在冲突。',...fields].join('；');
+      }
+      if(result==='stopped_unsupported_template')return '当前封装模板暂不支持自动建模。';
+      if(result==='needs_human_follow_up')return '需要确认器件类别后才能继续。';
+      if(result==='cancelled'||detail.graph_status==='cancelled')return '任务已取消。';
+      return publicMessage(job.error_msg)||'本次任务已停止，可以从原图重新开始。';
+    }
+    function renderStoppedJob(job){
+      const box=document.createElement('div');box.className='status-box error';
+      const title=document.createElement('strong');title.textContent=job.status==='rejected'?'审核未通过':'任务已停止';box.append(title);
+      const reason=document.createElement('p');reason.textContent=stopDescription(job);box.append(reason);
+      if(job.status==='stopped'&&job.restartable){const button=document.createElement('button');button.className='retry-button';button.type='button';button.textContent='重新运行（新建任务）';button.addEventListener('click',()=>restartStoppedJob(job.drawing_id));box.append(button);const note=document.createElement('p');note.textContent='会保留本次记录，并从原图重新开始；之前的人工回答不会沿用。';box.append(note);}
+      renderConversation(job,box,'本次任务已结束');
+    }
+    async function restartStoppedJob(id){
+      try{setSendState('working');show('正在从原图创建新任务…');const response=await fetch(`/api/v1/step/drawings/${encodeURIComponent(id)}/restart`,{method:'POST',headers:{Authorization:`Bearer ${token}`}});const data=await response.json();if(!response.ok)throw new Error(data.detail||'重新运行失败');localStorage.setItem('step-last-drawing-id',data.drawing_id);show(`已从原图重新运行，新任务编号：${escapeHtml(data.drawing_id)}`);poll(data.status_url);}
+      catch(err){show(err.message,true);setSendState('ready');}
+    }
+    async function restoreLastJob() {
+      const id=localStorage.getItem('step-last-drawing-id'); if(!id) return;
+      try { await poll(`/api/v1/step/drawings/${encodeURIComponent(id)}`); }
+      catch(_err) { /* Sidebar remains available if this task expired. */ }
+    }
+    async function loadRecentJobs(reset=false) {
+      const container=$('#recent-jobs');
+      if(reset){recentGeneration++;recentOffset=0;recentHasMore=true;recentLoading=false;}
+      if(!token||!recentHasMore||recentLoading)return;
+      const generation=recentGeneration;recentLoading=true;
+      try {
+        const response=await fetch(`/api/v1/step/drawings?limit=50&offset=${recentOffset}`,{headers:{Authorization:`Bearer ${token}`}});if(!response.ok)throw new Error('会话列表读取失败');
+        const data=await response.json(),items=data.items||[];if(generation!==recentGeneration)return;
+        const previousScroll=container.scrollTop;if(reset)container.replaceChildren();
+        container.querySelector('.load-more')?.remove();
+        if(!items.length&&recentOffset===0){const empty=document.createElement('p');empty.className='session-meta';empty.textContent='还没有任务会话';container.append(empty);}
+        for(const item of items){
+          const row=document.createElement('div');row.className='job-row';
+          const button=document.createElement('button');button.type='button';button.className='session-item';button.dataset.sessionId=item.drawing_id;
+          const title=document.createElement('span');title.className='session-title';title.textContent=item.human_request||'工程图转 STEP';
+          const meta=document.createElement('span');meta.className='session-meta';
+          const date=document.createElement('span');date.textContent=item.created_at?new Date(item.created_at).toLocaleDateString('zh-CN'):'';
+          const state=document.createElement('span');state.textContent=statusLabel(item.status);meta.append(date,state);
+          button.append(title,meta);button.addEventListener('click',()=>{clearTimeout(polling);localStorage.setItem('step-last-drawing-id',item.drawing_id);poll(`/api/v1/step/drawings/${encodeURIComponent(item.drawing_id)}`);});
+          const remove=document.createElement('button');remove.type='button';remove.className='session-delete';remove.textContent='删除';remove.title='删除此会话';remove.setAttribute('aria-label',`删除会话：${title.textContent}`);remove.addEventListener('click',()=>deleteSession(item,remove));
+          row.append(button,remove);container.append(row);
+        }
+        recentOffset+=items.length;recentHasMore=items.length===50;
+        if(recentHasMore){const more=document.createElement('button');more.type='button';more.className='load-more';more.textContent='加载更多会话';more.addEventListener('click',()=>loadRecentJobs());container.append(more);}
+        markActiveSession();
+        if(reset)container.scrollTop=previousScroll;
+      } catch(_err) { if(generation===recentGeneration&&recentOffset===0){const note=document.createElement('p');note.className='session-meta';note.textContent='会话列表暂时无法读取';container.append(note);} }
+      finally{if(generation===recentGeneration)recentLoading=false;}
+    }
+    async function deleteSession(item,button){
+      if(!token||button.disabled)return;
+      if(!window.confirm(`确定删除会话“${item.human_request||'工程图转 STEP'}”？\n任务记录、对话和生成文件将被删除，无法恢复。`))return;
+      button.disabled=true;
+      try{
+        const response=await fetch(`/api/v1/step/drawings/${encodeURIComponent(item.drawing_id)}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+        const data=await response.json();if(!response.ok)throw new Error(data.detail||'删除会话失败');
+        localStorage.removeItem(`step-chat-${item.drawing_id}`);
+        if(localStorage.getItem('step-last-drawing-id')===item.drawing_id)localStorage.removeItem('step-last-drawing-id');
+        if(activeSessionId===item.drawing_id){
+          clearTimeout(polling);pollGeneration++;activeSessionId=null;
+          $('#message').value='';file.value='';file.dispatchEvent(new Event('change'));setSendState('ready');
+          renderEmptyWorkspace();
+        }
+        await loadRecentJobs(true);
+        show(data.files_deleted===false?'会话已删除，部分文件暂未清理。':'会话已删除。');
+      }catch(err){show(err.message,true);}finally{button.disabled=false;}
+    }
+    const dimensionCopy = {
+      body_standoff: {title:'本体离桌面 / 电路板的高度',help:'看封装本体底面与引脚落地面之间的垂直距离。不要把引脚金属厚度填在这里。'},
+      housing_height: {title:'塑封本体自身高度',help:'只量黑色/塑料本体，从本体底面到本体顶面；不包含引脚离板高度。'},
+      nominal_pin_count: {title:'所有引脚的总数',help:'把器件四周或两侧的金属引脚全部数一遍，填写整数，例如 16。',unit:'个'},
+      pin_span: {title:'同一排最外侧两只引脚的中心距离',help:'量同一排第一只和最后一只引脚的中心距。若图上给了引脚间距和数量，可按提示计算。'},
+      terminal_pitch: {title:'相邻引脚的中心间距',help:'量相邻两只引脚中心之间的距离。'},
+      terminal_length: {title:'引脚伸出本体后的脚长',help:'看引脚弯折/量规平面详图，量金属脚从弯折处到脚尖的长度。'},
+      terminal_thickness: {title:'金属引脚本身的厚度',help:'量引脚金属片的厚薄；不要填写引脚间距，也不要把“共面度”当成厚度。'},
+      total_height: {title:'从引脚落地面到器件最高点的总高度',help:'看侧视图的整体高度尺寸；标有 MAX 时填写 MAX 数值。'},
+      overall_width: {title:'包含引脚的整体宽度',help:'量器件最外侧到最外侧的宽度；不要只量塑封本体。'},
+      body_width: {title:'塑封本体宽度',help:'只量塑料/黑色本体两侧之间的宽度，不包含伸出的引脚。'},
+      body_length: {title:'塑封本体长度',help:'只量塑料/黑色本体两端之间的长度。'},
+      overall_length: {title:'包含引脚的整体长度',help:'量器件最外侧到最外侧的长度。'},
+      terminal_width: {title:'单只引脚的宽度',help:'看引脚俯视图，量一只金属脚横向的宽度。'},
+      body_height: {title:'塑封本体高度',help:'只量塑封本体，不包含引脚离板高度。'}
+    };
+    function candidateSourceLabel(kind) {
+      return ({dimension_line:'图纸标注',table_row:'图纸尺寸表',human_input:'你之前填写',derived:'系统计算'})[kind] || '系统识别';
+    }
+    function renderQuestion(job) {
+      const q=job.pending_input, box=document.createElement('div'); box.className='answers';
+      const questionText=({package:'请确认封装类型，也可以自动识别。',routing:'请确认使用的封装模板。',dimensions:'请补充以下尺寸，填写你能确认的项目即可。',review:'请查看模型预览，确认无误后完成任务。'})[q.stage]||'请确认下一步操作。';
+      if (q.validation_error) { const err=document.createElement('p');err.textContent=publicMessage(q.validation_error);box.append(err); }
+      let makeAnswer;
+      if (q.stage==='package') {
+        const input=document.createElement('input'); input.type='text';input.placeholder='例如 SOP8 / TSSOP-16';box.append(input);
+        const actions=document.createElement('div');actions.className='answer-actions';
+        makeAnswer=(action)=>({action,...(action==='provide'?{package_type:input.value}:{})});
+        addAction(actions,'确认封装',()=>makeAnswer('provide')); addAction(actions,'自动识别',()=>makeAnswer('auto')); addAction(actions,'取消任务',()=>makeAnswer('cancel'));box.append(actions);
+      } else if (q.stage==='dimensions') {
+        const intro=document.createElement('div');intro.className='dimension-intro';
+        intro.textContent=q.conflict_details?.length?'系统发现尺寸之间有冲突。请根据下面的说明核对相关项目并重新填写；只需填写这次列出的项目，长度默认 mm，引脚数填整数。':'看不懂字段名也没关系，下面已换成中文说明。只填写你能从图纸确认的项目；不确定的可以留空，系统会继续检查。每次至少填写一项。长度单位默认 mm。';box.append(intro);
+        for(const detail of q.conflict_details||[]){const note=document.createElement('p');note.className='dimension-help';note.textContent=String(detail).replace(/\b[a-z]+(?:_[a-z]+)+\b/g,name=>dimensionNames[name]||name);box.append(note);}
+        const list=document.createElement('div');list.className='dimension-list';
+        const values={}; const previous=(q.previous_answer||{}).values||{};
+        for (const [field,spec] of Object.entries(q.fields||{})) {
+          const meta=dimensionCopy[field]||{title:spec.label_zh||spec.title||spec.description||'尺寸参数',help:'请按图纸标注填写数值。'};
+          const card=document.createElement('section');card.className='dimension-field';
+          const heading=document.createElement('div');heading.className='dimension-title';
+          const title=document.createElement('span');title.textContent=meta.title;heading.append(title);
+          const unit=document.createElement('span');unit.className='dimension-unit';unit.textContent=meta.unit||(spec.unit==='count'?'个':'mm');heading.append(unit);card.append(heading);
+          const help=document.createElement('p');help.className='dimension-help';help.textContent=spec.conflict_explanation||meta.help;card.append(help);
+          const candidates=spec.observed_candidates||[];
+          if(candidates.length){
+            const candidateList=document.createElement('div');candidateList.className='candidate-list';
+            for(const candidate of candidates){
+              const row=document.createElement('div');row.className='candidate';
+              const note=document.createElement('span');note.textContent=`系统读到 ${candidate.value}${candidate.unit==='count'?' 个':` ${candidate.unit||'mm'}`}（${candidateSourceLabel(candidate.evidence_kind)}，请核对）`;
+              const use=document.createElement('button');use.type='button';use.textContent='填入';
+              use.addEventListener('click',()=>{input.value=candidate.value;input.dispatchEvent(new Event('input',{bubbles:true}));});
+              row.append(note,use);candidateList.append(row);
+            }
+            card.append(candidateList);
+          }
+          if(spec.reason && spec.reason!=='图纸未能唯一识别该参数'){
+            const warning=document.createElement('p');warning.className='dimension-help';warning.textContent='系统发现这个数值与图纸或其他尺寸不一致，请重新核对。';card.append(warning);
+          }
+          const inputWrap=document.createElement('div');inputWrap.className='dimension-input';
+          const input=document.createElement('input');input.type='number';input.inputMode='decimal';input.step=spec.unit==='count'?'1':'any';input.min=spec.unit==='count'?'1':'0';input.dataset.field=field;input.setAttribute('aria-label',meta.title);
+          input.placeholder=spec.unit==='count'?'填写整数，例如 16':'填写图纸上的数值';
+          if(previous[field]!==undefined)input.value=typeof previous[field]==='object'?previous[field].value:previous[field];
+          inputWrap.append(input);card.append(inputWrap);
+          const tech=document.createElement('details');tech.className='dimension-tech';const summary=document.createElement('summary');summary.textContent='查看系统参数名';const code=document.createElement('code');code.textContent=field;tech.append(summary,code);card.append(tech);
+          list.append(card);
+        }
+        box.append(list);
+        const actions=document.createElement('div');actions.className='dimension-actions';
+        makeAnswer=()=>{
+          const values={};for(const input of box.querySelectorAll('[data-field]')) if(input.value.trim()!=='') values[input.dataset.field]={value:Number(input.value),unit:(q.fields[input.dataset.field]||{}).unit||'mm'};
+          if(!Object.keys(values).length){show('至少填写一个你能确认的尺寸；不确定的其他项可以留空。',true);return null;}
+          return {action:'provide',values};
+        };
+        addAction(actions,'提交已填写的尺寸',makeAnswer);addAction(actions,'取消任务',()=>({action:'cancel'}));box.append(actions);
+      } else if (q.stage==='routing') {
+        const select=document.createElement('select');select.setAttribute('aria-label','模板类别');for(const item of (q.candidates||[]).filter(x=>x.implemented)){const opt=document.createElement('option');opt.value=item.family_id;opt.textContent=templateLabel(item.family_id);select.append(opt);}box.append(select);
+        const actions=document.createElement('div');actions.className='answer-actions';makeAnswer=()=>({action:'change',family_id:select.value});addAction(actions,'使用此封装模板',makeAnswer);if((q.options||[]).includes('confirm'))addAction(actions,'确认系统建议',()=>({action:'confirm'}));addAction(actions,'取消任务',()=>({action:'cancel'}));box.append(actions);
+      } else if (q.stage==='review') {
+        addPreviewControls(box,q.preview_urls);
+        makeAnswer=()=>({action:'approve'});const actions=document.createElement('div');actions.className='answer-actions';addAction(actions,'批准并完成',makeAnswer);addAction(actions,'拒绝模型',()=>({action:'reject'}));box.append(actions);
+      }
+      const key=`question:${q.interrupt_id}`,history=readConversation(job.drawing_id),existing=history.find(item=>item.key===key);
+      if(existing){existing.text=questionText;saveConversation(job.drawing_id,history);}else appendConversation(job.drawing_id,'assistant',key,questionText);
+      renderConversation(job,box,'需要你补充一步，回答后会继续当前任务。');
+      for(const button of box.querySelectorAll('button[data-answer]')) button.addEventListener('click',()=>{const answer=button._answer();if(answer)answerQuestion(job,q,answer);});
+      function addAction(container,label,answerFn){const b=document.createElement('button');b.type='button';b.className='primary';b.innerHTML=`<span>${label}</span><span class="arrow">↗</span>`;b.dataset.answer='1';b._answer=answerFn;container.append(b);}
+    }
+    async function answerQuestion(job,q,answer) {
+      if(q.stage==='package' && answer.action==='provide' && !answer.package_type.trim()){show('请填写封装名称，或选择自动识别。',true);return;}
+      const controls=Array.from(statusEl.querySelectorAll('button[data-answer]'));if(controls.some(button=>button.disabled))return;controls.forEach(button=>button.disabled=true);
+      setSendState('working');
+      try { const response=await fetch(job.human_input_url,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({interrupt_id:q.interrupt_id,answer})});const data=await response.json();if(!response.ok){const error=new Error(data.detail||'提交回答失败');error.status=response.status;throw error;}appendConversation(job.drawing_id,'user',`answer:${q.interrupt_id}`,formatAnswer(q.stage,answer));if(activeSessionId!==job.drawing_id)return;renderConversation({...job,status:'ai_processing',pending_input:null},null,'正在继续处理…');polling=setTimeout(()=>poll(`/api/v1/step/drawings/${job.drawing_id}`),800); }
+      catch(err){
+        if(activeSessionId!==job.drawing_id)return;
+        setSendState('waiting');
+        if(err.status===422){
+          try { const response=await fetch(`/api/v1/step/drawings/${encodeURIComponent(job.drawing_id)}`,{headers:{Authorization:`Bearer ${token}`}});const latest=await response.json();if(response.ok&&latest.pending_input){latest.pending_input.validation_error=err.message;latest.pending_input.previous_answer=answer;renderQuestion(latest);return;} }
+          catch(_ignored) { /* Keep the validation message below. */ }
+        }
+        show(err.message,true);
+      }
+      finally{controls.forEach(button=>button.disabled=false);}
+    }
+    function showFailure(job) {
+      const box=document.createElement('div');box.className='status-box error';
+      const message=document.createElement('p');message.textContent=publicMessage(job.error_msg,'这次处理暂未完成，图纸和已填写的信息已保留，可以重试。')||'这次处理暂未完成，可以重试。';box.append(message);
+      if(job.retryable!==false){const button=document.createElement('button');button.className='retry-button';button.type='button';button.textContent=({continue_from_dimensions:'保留回答，继续核对尺寸',continue_from_view:'保留进度，重试当前步骤'})[job.retry_strategy]||'从原图重新运行';button.addEventListener('click',()=>retryJob(job.drawing_id));box.append(button);}
+      renderConversation(job,box,'任务执行失败');
+    }
+    async function retryJob(id) {
+      try { setSendState('working');show('正在恢复原任务…');const response=await fetch(`/api/v1/step/drawings/${encodeURIComponent(id)}/retry`,{method:'POST',headers:{Authorization:`Bearer ${token}`}});const data=await response.json();if(!response.ok)throw new Error(data.detail||'重试失败');localStorage.setItem('step-last-drawing-id',id);poll(data.status_url); }
+      catch(err){show(err.message,true);setSendState('ready');}
+    }
+  </script>
+</body>
+</html>

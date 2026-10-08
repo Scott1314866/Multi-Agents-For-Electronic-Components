@@ -78,11 +78,21 @@ psql -h localhost -p 5432 -U your_db_user -d agent -f scripts/init_db_package.sq
 
 ## 启动服务
 
+本机使用 conda 的 `ima-agent` 环境，可直接运行下面的启动脚本（数据库容器应已启动）：
+
+```powershell
+.\scripts\start_project.ps1
+# 在后台运行：
+.\scripts\start_project.ps1 -Background
+```
+
+脚本使用 `D:\Anaconda_envs\envs\ima-agent\python.exe`，也可通过 `-PythonPath` 指定其他解释器。启动前检查运行依赖，并通过 Python 的 `-s` 参数禁用用户目录包，避免用户目录中旧版 LangGraph 覆盖 conda 环境的依赖。手动启动已激活的 conda 环境时使用 `python -s -m backend.main`。
+
 在 Windows PowerShell 中，从项目根目录运行：
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m backend.main
+.\.venv\Scripts\python.exe -s -m backend.main
 ```
 
 以上 venv 命令仅创建虚拟环境；请先在目标环境安装项目及 CadQuery、PostgreSQL saver 等运行依赖。若已有可用的项目环境，直接使用该环境中的 Python 启动即可。
@@ -90,10 +100,14 @@ python -m venv .venv
 当前标准入口为 `backend.main`，兼容入口 `backend.step_main` 和 `backend.new_main` 也可用：
 
 ```powershell
-python -m backend.step_main
+python -s -m backend.step_main
 ```
 
 服务默认监听 `127.0.0.1:8000`。启动时会执行数据库迁移和 STEP 任务恢复；健康检查为 `GET /health`，OpenAPI 文档为 `/docs`，最简上传页面为 `/api/v1/step/ui`。
+
+对话页会自动更新当前任务的执行日志，显示各步骤的开始、完成、等待确认和耗时。日志随任务存入 PostgreSQL，刷新或切换会话后仍可查看；默认展示最近 12 条，可展开此前日志。状态接口返回 `execution_logs`，每个任务最多保留 600 条。仅记录功能上线后实际执行的步骤，不补写旧任务日志。后台启动日志使用 UTF-8 并立即刷新，输出在 `tmp/server.stdout.log` 和 `tmp/server.stderr.log`。
+
+页面通过 `include_checkpoint=false` 轮询已保存的业务状态，避免重复编译工作流和加载完整证据；提交人工回答时仍会锁定记录并验证实时检查点。视觉 JSON 输出预算为 4096 token，截断时最多重试一次至 8192 token，整次调用最多等待 120 秒，不接受截断结果。此类失败可从当前视图分析恢复，复用 OCR 和此前回答。可选参考模型检索超过 20 秒后继续本地图纸建模；CPU OCR 引擎跨任务复用，首次加载和复杂图纸识别仍可能较慢。
 
 ## STEP API 快速流程
 
@@ -131,13 +145,13 @@ Content-Type: application/json
 
 ## 测试与开发
 
-在包含测试依赖的项目环境中运行：
+测试范围、环境配置、真实模型回归及端到端验证方式见 [测试指南](docs/testing.md)。在包含测试依赖的项目环境中运行默认离线测试集：
 
 ```powershell
-python -m pytest
+python -s -m pytest -m "not integration"
 ```
 
-涉及真实模型服务的测试可能需要额外凭据或外部服务；具体测试标注见测试文件和 `pytest.ini`。STEP API 端到端验证脚本、人工交互示例及其退出码说明见 [STEP 人工交互文档](docs/step-human-interaction.md)。
+STEP API 端到端验证脚本、人工交互示例及其退出码说明见 [STEP 人工交互文档](docs/step-human-interaction.md)。
 
 ## 当前边界
 
