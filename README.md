@@ -143,13 +143,13 @@ Content-Type: application/json
 
 ## 测试与开发
 
-在包含测试依赖的项目环境中运行：
+测试范围、环境配置、真实模型回归及端到端验证方式见 [测试指南](docs/testing.md)。在包含测试依赖的项目环境中运行默认离线测试集：
 
 ```powershell
-python -m pytest
+python -s -m pytest -m "not integration"
 ```
 
-涉及真实模型服务的测试可能需要额外凭据或外部服务；具体测试标注见测试文件和 `pytest.ini`。STEP API 端到端验证脚本、人工交互示例及其退出码说明见 [STEP 人工交互文档](docs/step-human-interaction.md)。
+STEP API 端到端验证脚本、人工交互示例及其退出码说明见 [STEP 人工交互文档](docs/step-human-interaction.md)。
 
 ## 当前边界
 
