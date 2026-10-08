@@ -1,0 +1,250 @@
+{
+  "device": "ADS1115",
+  "package": "DGS",
+  "package_full_name": "",
+  "source": {
+    "file": "D:\\WorkSpace\\Claude\\Module_01\\spike\\s_web\\ads1115\\4019d6821da2.pdf",
+    "pages": [
+      3,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56
+    ]
+  },
+  "pins": [
+    {
+      "pin_number": "1",
+      "name": "ADDR",
+      "type": "IN",
+      "side": "left",
+      "side_order": 0,
+      "description": "I²C target address select",
+      "evidence": [
+        {
+          "page": 3,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 3,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "2",
+      "name": "ALERT/RDY",
+      "type": "OUT",
+      "side": "left",
+      "side_order": 1,
+      "description": "Comparator output or conversion ready (ADS1114 and ADS1115 only).Open-drain output. Connect to VDD using a pullup resistor.",
+      "evidence": [
+        {
+          "page": 3,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 3,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "3",
+      "name": "GND",
+      "type": "PAS",
+      "side": "left",
+      "side_order": 2,
+      "description": "Ground",
+      "evidence": [
+        {
+          "page": 3,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 3,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "4",
+      "name": "AIN0",
+      "type": "IN",
+      "side": "left",
+      "side_order": 3,
+      "description": "Analog input 0",
+      "evidence": [
+        {
+          "page": 3,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 3,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "5",
+      "name": "AIN1",
+      "type": "IN",
+      "side": "left",
+      "side_order": 4,
+      "description": "Analog input 1",
+      "evidence": [
+        {
+          "page": 3,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 3,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "6",
+      "name": "AIN2",
+      "type": "IN",
+      "side": "right",
+      "side_order": 4,
+      "description": "Analog input 2 (ADS1115 only)",
+      "evidence": [
+        {
+          "page": 3,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 3,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "7",
+      "name": "AIN3",
+      "type": "IN",
+      "side": "right",
+      "side_order": 3,
+      "description": "Analog input 3 (ADS1115 only)",
+      "evidence": [
+        {
+          "page": 3,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 3,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "8",
+      "name": "VDD",
+      "type": "PAS",
+      "side": "right",
+      "side_order": 2,
+      "description": "Power supply. Connect a 0.1 μ F, power-supply decoupling capacitor to GND.",
+      "evidence": [
+        {
+          "page": 3,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 3,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "9",
+      "name": "SDA",
+      "type": "IO",
+      "side": "right",
+      "side_order": 1,
+      "description": "Serial data input and output. Connect to VDD using a pullup resistor.",
+      "evidence": [
+        {
+          "page": 3,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 3,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    },
+    {
+      "pin_number": "10",
+      "name": "SCL",
+      "type": "IN",
+      "side": "right",
+      "side_order": 0,
+      "description": "Serial clock input. Connect to VDD using a pullup resistor.",
+      "evidence": [
+        {
+          "page": 3,
+          "source": "text",
+          "bbox": null,
+          "agreement": false
+        },
+        {
+          "page": 3,
+          "source": "vision",
+          "bbox": null,
+          "agreement": true
+        }
+      ]
+    }
+  ],
+  "conflicts": []
+}

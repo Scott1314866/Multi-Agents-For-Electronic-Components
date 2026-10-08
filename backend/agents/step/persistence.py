@@ -10,6 +10,7 @@ from uuid import UUID
 from sqlalchemy.engine import URL
 
 from backend.config import get_settings
+from backend.agents.step.progress import invoke_with_progress
 
 
 def _postgres_dsn() -> str:
@@ -75,7 +76,7 @@ async def invoke_postgres_step_graph(
     """Invoke or resume a STEP workflow using the matching database thread."""
     config = step_checkpoint_config(mode, step_drawing_id)
     async with open_postgres_step_graph(mode) as graph:
-        return await graph.ainvoke(input_state, config=config)
+        return await invoke_with_progress(graph, input_state, config)
 
 
 async def resume_postgres_step_graph_at_node(
@@ -89,7 +90,7 @@ async def resume_postgres_step_graph_at_node(
     config = step_checkpoint_config(mode, step_drawing_id)
     async with open_postgres_step_graph(mode) as graph:
         await graph.aupdate_state(config, updates, as_node=as_node)
-        return await graph.ainvoke(None, config=config)
+        return await invoke_with_progress(graph, None, config)
 
 
 def serialize_step_snapshot(snapshot: Any) -> dict[str, Any]:

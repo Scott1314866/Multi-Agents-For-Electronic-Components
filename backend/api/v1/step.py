@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -17,11 +18,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
 from backend.agents.step.human_nodes import validate_human_answer
+from backend.agents.step.progress import emit_progress, progress_scope
 from backend.agents.step.persistence import (
     get_postgres_step_snapshot,
     invoke_postgres_step_graph,
     open_postgres_step_job_lock,
     resume_postgres_step_graph_at_node,
+    step_checkpoint_config,
 )
 from backend.core.logger import get_logger
 from backend.dependencies import AsyncSessionLocal, get_current_user
@@ -54,6 +57,28 @@ def _json_default(value: Any) -> Any:
     raise TypeError(f"不可序列化的 STEP 任务结果：{type(value).__name__}")
 
 
+async def _append_execution_log(drawing_id: str, tenant_id: str, event: dict) -> None:
+    """Append atomically without overwriting the checkpoint projection or answers."""
+    async with AsyncSessionLocal() as session:
+        await session.execute(text("""
+            UPDATE step_drawings
+            SET package_params = jsonb_set(COALESCE(package_params, '{}'::jsonb),
+                '{execution_logs}', (
+                    SELECT COALESCE(jsonb_agg(item ORDER BY ordinal), '[]'::jsonb)
+                    FROM (
+                        SELECT item, ordinal FROM jsonb_array_elements(
+                            COALESCE(package_params->'execution_logs', '[]'::jsonb)
+                            || CAST(:event AS jsonb)
+                        ) WITH ORDINALITY AS entries(item, ordinal)
+                        ORDER BY ordinal DESC LIMIT 600
+                    ) AS recent
+                ))
+            WHERE id = CAST(:id AS uuid) AND tenant_id = :tenant_id
+        """), {"id": drawing_id, "tenant_id": tenant_id,
+               "event": json.dumps([event], ensure_ascii=False)})
+        await session.commit()
+
+
 async def _update_job_failed(drawing_id: str, tenant_id: str, error: str) -> None:
     async with AsyncSessionLocal() as session:
         await session.execute(
@@ -74,6 +99,7 @@ async def _update_job_failed(drawing_id: str, tenant_id: str, error: str) -> Non
             },
         )
         await session.commit()
+    await emit_progress("本次执行未完成，请查看下方提示后重试。", phase="error")
 
 
 def _pending_input(snapshot: dict) -> dict | None:
@@ -268,6 +294,18 @@ async def _persist_job_snapshot(
         )
         await session.commit()
     logger.info("step.job_checkpoint_saved", drawing_id=drawing_id, status=job_status)
+    terminal_messages = {
+        "awaiting_input": ("waiting", "当前步骤已保存，等待你补充或确认。"),
+        "pending_review": ("waiting", "模型已生成，等待你审核。"),
+        "completed": ("completed", "任务已完成。"),
+        "reviewed": ("completed", "模型审核通过，STEP 文件可下载。"),
+        "rejected": ("warning", "模型已拒绝。"),
+        "stopped": ("warning", "任务已暂停，请查看下方说明。"),
+        "failed": ("error", "本次执行未完成，请查看下方提示。"),
+    }
+    if job_status in terminal_messages:
+        phase, message = terminal_messages[job_status]
+        await emit_progress(message, phase=phase)
 
 
 async def _mark_job_recoverable(
@@ -354,6 +392,19 @@ def _failed_dimension_relationship(snapshot: dict) -> str | None:
     return None
 
 
+def _failed_view_analysis(snapshot: dict) -> bool:
+    state = snapshot.get("values") or {}
+    errors = " ".join(str(item) for item in state.get("errors", []))
+    return bool(
+        state.get("status") == "failed" and state.get("current_view_id")
+        and state.get("current_prompt_evidence") and not snapshot.get("interrupts")
+        and not snapshot.get("next_nodes")
+        and any(marker in errors for marker in (
+            "length limit", "LengthFinishReason", "图纸分析输出", "图纸分析响应超时",
+        ))
+    )
+
+
 async def _sync_job_projection(
     drawing_id: str,
     tenant_id: str,
@@ -393,6 +444,10 @@ async def _run_owned_image_job(
     params = _package_params(row)
     if row["status"] != "ai_processing" and not params.get("projection_sync_failed"):
         return
+    await emit_progress(
+        "正在从已保存的进度恢复任务。" if recovering else
+        "已收到确认，继续处理图纸。" if params.get("accepted_input") else "开始处理图纸。"
+    )
     original_filename = params.get("original_filename") or original_filename
     accepted = params.get("accepted_input")
     if params.get("retry_from_checkpoint"):
@@ -427,6 +482,20 @@ async def _run_owned_image_job(
                 )
             except Exception as exc:
                 logger.error("step.checkpoint_retry_failed", drawing_id=drawing_id, exc_info=True)
+                await _update_job_failed(drawing_id, tenant_id, str(exc))
+                return
+            await _sync_job_projection(drawing_id, tenant_id, original_filename)
+            return
+        elif _failed_view_analysis(snapshot):
+            await emit_progress("复用已识别的图纸证据，从失败的视图分析步骤继续。")
+            try:
+                await resume_postgres_step_graph_at_node(
+                    "image", drawing_id,
+                    {"status": "view_evidence_retrieved", "errors": [], "result": {}},
+                    as_node="retrieve_view_evidence",
+                )
+            except Exception as exc:
+                logger.error("step.view_retry_failed", drawing_id=drawing_id, exc_info=True)
                 await _update_job_failed(drawing_id, tenant_id, str(exc))
                 return
             await _sync_job_projection(drawing_id, tenant_id, original_filename)
@@ -509,12 +578,16 @@ async def _run_image_job(
                 logger.info("step.recovery_active_worker_skipped", drawing_id=drawing_id)
                 return
             try:
-                await _run_owned_image_job(
-                    drawing_id, tenant_id, image_path, output_dir, original_filename,
-                    human_request=human_request,
-                    resume_input=resume_input, recovering=recovering,
-                    restart=restart,
-                )
+                async def save_event(event):
+                    await _append_execution_log(drawing_id, tenant_id, event)
+
+                with progress_scope(save_event):
+                    await _run_owned_image_job(
+                        drawing_id, tenant_id, image_path, output_dir, original_filename,
+                        human_request=human_request,
+                        resume_input=resume_input, recovering=recovering,
+                        restart=restart,
+                    )
             except asyncio.CancelledError:
                 # Record interruption before releasing ownership so a recovering
                 # worker cannot be overwritten by this worker's cleanup.
@@ -692,13 +765,14 @@ async def submit_step_drawing_compat(
 @router.get("/ui", include_in_schema=False)
 async def step_generation_ui():
     """Serve the minimal natural-language upload page."""
-    return FileResponse(Path(__file__).with_name("step_ui.html"), media_type="text/html")
+    return FileResponse(Path(__file__).with_name("step_ui.html"), media_type="text/html", headers={"Cache-Control": "no-store"})
 
 
 @router.get("/drawings/{drawing_id}")
 async def get_step_drawing(
     drawing_id: uuid.UUID,
     current_user: dict = Depends(get_current_user),
+    include_checkpoint: bool = True,
 ):
     """Return job status and generated artifact metadata for the caller's tenant."""
     async with AsyncSessionLocal() as session:
@@ -720,12 +794,14 @@ async def get_step_drawing(
     # Read checkpoints only after the tenant-scoped ownership query succeeds.
     checkpoint_error = None
     try:
-        snapshot = await get_postgres_step_snapshot("image", drawing_id)
-        pending = (
-            _pending_input(snapshot)
-            if row["status"] in {"awaiting_input", "pending_review"}
-            else None
-        )
+        if include_checkpoint or row["status"] == "failed":
+            snapshot = await get_postgres_step_snapshot("image", drawing_id)
+            pending = _pending_input(snapshot) if row["status"] in {"awaiting_input", "pending_review"} else None
+        else:
+            # Poll durable business metadata. Answers still re-read and validate
+            # the live checkpoint under the row lock in the human-input route.
+            snapshot = {"checkpoint_id": params.get("checkpoint_id"), "next_nodes": params.get("next_nodes", [])}
+            pending = params.get("pending_input") if row["status"] in {"awaiting_input", "pending_review"} else None
         checkpoint_available = snapshot.get("checkpoint_id") is not None
     except Exception as exc:
         # A saver/initialization failure must not hide the business error that
@@ -755,6 +831,7 @@ async def get_step_drawing(
             if row["preview_path"] else None
         ),
         "result": params,
+        "execution_logs": params.get("execution_logs", []),
         "error_msg": error_msg,
         "stop_reason": {
             "graph_status": params.get("graph_status"),
@@ -764,7 +841,8 @@ async def get_step_drawing(
             "conflicting_fields": params.get("conflicting_fields", []),
         } if row["status"] == "stopped" else None,
         "retryable": bool(params.get("retryable", row["status"] == "failed")),
-        "retry_strategy": "continue_from_dimensions" if repairable_relationship else "rerun_from_image",
+        "retry_strategy": "continue_from_dimensions" if repairable_relationship else "continue_from_view" if _failed_view_analysis(snapshot) else "rerun_from_image",
+        "checkpoint_metadata_source": "checkpoint" if include_checkpoint or row["status"] == "failed" else "projection",
         "needs_review": row["needs_review"],
         "preview_urls": _preview_urls(drawing_id, row),
         "pending_input": _public_pending_input(pending, drawing_id, row),
@@ -1076,6 +1154,69 @@ async def list_step_drawings(
         "limit": limit,
         "offset": offset,
     }
+
+
+@router.delete("/drawings/{drawing_id}")
+async def delete_step_drawing(
+    drawing_id: uuid.UUID,
+    current_user: dict = Depends(get_current_user),
+):
+    """Delete a tenant-owned idle job and its checkpoints, then clean its files."""
+    tenant_id = current_user["tenant_id"]
+    async with AsyncExitStack() as ownership, AsyncSessionLocal() as session:
+        async with session.begin():
+            result = await session.execute(
+                text("""
+                    SELECT id, status FROM step_drawings
+                    WHERE id = :id AND tenant_id = :tenant_id
+                    FOR UPDATE
+                """),
+                {"id": drawing_id, "tenant_id": tenant_id},
+            )
+            row = result.mappings().fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="STEP 会话不存在")
+            if row["status"] in {"pending", "ai_processing"}:
+                raise HTTPException(status_code=409, detail="会话正在处理，请等待任务暂停或结束后再删除")
+            # Share ownership with workers so a finishing/recovering worker
+            # cannot recreate checkpoints or files after deletion.
+            acquired = await ownership.enter_async_context(open_postgres_step_job_lock(drawing_id, wait=False))
+            if not acquired:
+                raise HTTPException(status_code=409, detail="会话正在保存进度，请稍后再删除")
+            thread_ids = {
+                f"thread_{mode}": step_checkpoint_config(mode, drawing_id)["configurable"]["thread_id"]
+                for mode in ("image", "drawing")
+            }
+            # These tables may not exist for a job that failed before its
+            # graph started. Table names are application constants.
+            for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
+                exists = await session.execute(
+                    text("SELECT to_regclass(:table)"), {"table": table}
+                )
+                if exists.scalar_one_or_none() is not None:
+                    await session.execute(
+                        text(f"DELETE FROM {table} WHERE thread_id IN (:thread_image, :thread_drawing)"),
+                        thread_ids,
+                    )
+            await session.execute(
+                text("DELETE FROM step_drawings WHERE id = :id AND tenant_id = :tenant_id"),
+                {"id": drawing_id, "tenant_id": tenant_id},
+            )
+        # A queued worker rechecks the row after acquiring its lock and exits
+        # when it no longer exists. Never trust stored artifact paths for cleanup.
+    files_deleted = True
+    root = STEP_JOB_ROOT.resolve()
+    job_root = (root / str(drawing_id)).resolve()
+    if job_root.parent != root:
+        files_deleted = False
+        logger.warning("step.delete_unsafe_directory_skipped", drawing_id=str(drawing_id))
+    elif job_root.exists():
+        try:
+            await asyncio.to_thread(shutil.rmtree, job_root)
+        except OSError:
+            files_deleted = False
+            logger.error("step.delete_file_cleanup_failed", drawing_id=str(drawing_id), exc_info=True)
+    return {"drawing_id": str(drawing_id), "deleted": True, "files_deleted": files_deleted}
 
 
 @router.get("/drawings/{drawing_id}/artifacts/{artifact_name}")

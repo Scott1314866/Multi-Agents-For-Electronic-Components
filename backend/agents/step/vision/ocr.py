@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
+from threading import Lock
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Iterable
@@ -16,6 +18,7 @@ from backend.core.logger import get_logger
 
 
 logger = get_logger(__name__)
+_ENGINE_LOCK = Lock()
 
 
 _NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"
@@ -300,6 +303,7 @@ def _iou(first: tuple[int, int, int, int], second: tuple[int, int, int, int]) ->
     return intersection / float(area_first + area_second - intersection)
 
 
+@lru_cache(maxsize=1)
 def create_paddle_engine() -> Any:
     """延迟创建 PP-OCRv6 medium CPU 引擎，避免单元测试强制加载模型。"""
     try:
@@ -347,7 +351,12 @@ def extract_ocr_tokens(
         raise ValueError(f"无法读取 OCR 图片：{gray_path}")
     height, width = image.shape
     paddle_image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-    engine = engine or create_paddle_engine()
+    # The vision executor has one worker; keep the model warm across uploads.
+    # The lock also protects shared inference for callers outside that executor.
+    shared_engine = engine is None
+    if shared_engine:
+        with _ENGINE_LOCK:
+            engine = create_paddle_engine()
     candidates: list[OCRToken] = []
     for scan_round, rotation in enumerate(rotations, start=1):
         if rotation == 90:
@@ -357,7 +366,11 @@ def extract_ocr_tokens(
         else:
             target = paddle_image
         started_at = perf_counter()
-        predictions = _run_engine(engine, target)
+        if shared_engine:
+            with _ENGINE_LOCK:
+                predictions = _run_engine(engine, target)
+        else:
+            predictions = _run_engine(engine, target)
         scan_items: list[dict[str, Any]] = []
         for item_index, (polygon_raw, text, confidence) in enumerate(
             predictions, start=1

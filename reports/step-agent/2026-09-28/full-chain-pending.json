@@ -1,0 +1,150 @@
+{
+  "service_pid": 31316,
+  "status": "awaiting_user_answers",
+  "tasks": [
+    {
+      "image": "ADC_图纸10.png",
+      "drawing_id": "1648c413-4c80-4207-866d-a51b3f189aa4",
+      "status": "awaiting_input",
+      "checkpoint_id": "1f1bad58-36b6-6a51-8000-14c5355b6714",
+      "checkpoint_rows": 2,
+      "checkpoint_writes": 4,
+      "interrupt_id": "19cf1ed7cbe15eb26fd11c8218c6b4d1",
+      "stage": "package",
+      "next_nodes": [
+        "ask_package"
+      ],
+      "state_matches_source": true,
+      "answer_submitted": false,
+      "question": "这张工程图需要生成什么封装？请填写封装名称；不确定可选择自动识别。",
+      "options": [
+        "provide",
+        "auto",
+        "cancel"
+      ],
+      "fields": {
+        "package_type": "provide 时必填，例如 TSSOP-16、LQFP64"
+      }
+    },
+    {
+      "image": "ADC_图纸11.png",
+      "drawing_id": "d399c6b9-261c-4be8-879a-22efa7369fc8",
+      "status": "awaiting_input",
+      "checkpoint_id": "1f1bad58-36c1-667e-8000-e619fcffbae5",
+      "checkpoint_rows": 2,
+      "checkpoint_writes": 4,
+      "interrupt_id": "47cbe0d93da573a46b4c9435e63c7c13",
+      "stage": "package",
+      "next_nodes": [
+        "ask_package"
+      ],
+      "state_matches_source": true,
+      "answer_submitted": false,
+      "question": "这张工程图需要生成什么封装？请填写封装名称；不确定可选择自动识别。",
+      "options": [
+        "provide",
+        "auto",
+        "cancel"
+      ],
+      "fields": {
+        "package_type": "provide 时必填，例如 TSSOP-16、LQFP64"
+      }
+    },
+    {
+      "image": "MCU_图纸8.png",
+      "drawing_id": "4f51a4c0-2153-4f7d-b022-20d2b84cca75",
+      "status": "awaiting_input",
+      "checkpoint_id": "1f1bad58-37b2-602d-8000-4e07da6d3049",
+      "checkpoint_rows": 2,
+      "checkpoint_writes": 4,
+      "interrupt_id": "ff7ef7111ce8844634f929289d27e6c3",
+      "stage": "package",
+      "next_nodes": [
+        "ask_package"
+      ],
+      "state_matches_source": true,
+      "answer_submitted": false,
+      "question": "这张工程图需要生成什么封装？请填写封装名称；不确定可选择自动识别。",
+      "options": [
+        "provide",
+        "auto",
+        "cancel"
+      ],
+      "fields": {
+        "package_type": "provide 时必填，例如 TSSOP-16、LQFP64"
+      }
+    },
+    {
+      "image": "MISC-00008.png",
+      "drawing_id": "e29e0a96-5329-44f5-bacf-2e8d79e82720",
+      "status": "awaiting_input",
+      "checkpoint_id": "1f1bad58-3bc5-67a1-8000-024c653d4d02",
+      "checkpoint_rows": 2,
+      "checkpoint_writes": 4,
+      "interrupt_id": "0ebb2ddb7a911c003912f33d671ea2d4",
+      "stage": "package",
+      "next_nodes": [
+        "ask_package"
+      ],
+      "state_matches_source": true,
+      "answer_submitted": false,
+      "question": "这张工程图需要生成什么封装？请填写封装名称；不确定可选择自动识别。",
+      "options": [
+        "provide",
+        "auto",
+        "cancel"
+      ],
+      "fields": {
+        "package_type": "provide 时必填，例如 TSSOP-16、LQFP64"
+      }
+    },
+    {
+      "image": "TR-00002.png",
+      "drawing_id": "379cafbf-6373-4acd-8881-09e147b41be7",
+      "status": "awaiting_input",
+      "checkpoint_id": "1f1bad58-3cbc-66f8-8000-df8d98fc57b8",
+      "checkpoint_rows": 2,
+      "checkpoint_writes": 4,
+      "interrupt_id": "fbe95696ea498bf9988ea3facd5d861e",
+      "stage": "package",
+      "next_nodes": [
+        "ask_package"
+      ],
+      "state_matches_source": true,
+      "answer_submitted": false,
+      "question": "这张工程图需要生成什么封装？请填写封装名称；不确定可选择自动识别。",
+      "options": [
+        "provide",
+        "auto",
+        "cancel"
+      ],
+      "fields": {
+        "package_type": "provide 时必填，例如 TSSOP-16、LQFP64"
+      }
+    },
+    {
+      "image": "TR-00007-3.png",
+      "drawing_id": "71bae597-28a6-4a80-be3c-8b1417e6a589",
+      "status": "awaiting_input",
+      "checkpoint_id": "1f1bad58-3db9-6767-8000-395d515ea206",
+      "checkpoint_rows": 2,
+      "checkpoint_writes": 4,
+      "interrupt_id": "1c16c7e07fbb2752b18b88dd635bc17d",
+      "stage": "package",
+      "next_nodes": [
+        "ask_package"
+      ],
+      "state_matches_source": true,
+      "answer_submitted": false,
+      "question": "这张工程图需要生成什么封装？请填写封装名称；不确定可选择自动识别。",
+      "options": [
+        "provide",
+        "auto",
+        "cancel"
+      ],
+      "fields": {
+        "package_type": "provide 时必填，例如 TSSOP-16、LQFP64"
+      }
+    }
+  ]
+}

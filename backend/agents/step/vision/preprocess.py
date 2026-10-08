@@ -66,14 +66,10 @@ def _remove_tiny_components(binary: np.ndarray) -> tuple[np.ndarray, int]:
     """移除孤立噪点，同时保留文字笔画和尺寸线。"""
     foreground = (binary < 128).astype(np.uint8)
     count, labels, stats, _ = cv2.connectedComponentsWithStats(foreground, 8)
-    cleaned = np.full(binary.shape, 255, dtype=np.uint8)
-    kept = 0
-    for label in range(1, count):
-        area = int(stats[label, cv2.CC_STAT_AREA])
-        if area < 3:
-            continue
-        cleaned[labels == label] = 0
-        kept += 1
+    keep = stats[:, cv2.CC_STAT_AREA] >= 3
+    keep[0] = False  # Background is not a foreground component.
+    cleaned = np.where(keep[labels], 0, 255).astype(np.uint8)
+    kept = int(np.count_nonzero(keep))
     return cleaned, kept
 
 
