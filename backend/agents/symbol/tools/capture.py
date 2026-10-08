@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
+import re
 
 from backend.agents.symbol.config import DBO_DLL, resolve_tclsh
 from backend.agents.symbol.contracts.layout import SymbolLayout
@@ -58,12 +59,36 @@ class CaptureResult:
     script: Path
 
 
+class CaptureToolchainUnavailable(FileNotFoundError):
+    """Execution is unavailable, but a portable script has been written."""
+
+    def __init__(self, message: str, script: Path):
+        super().__init__(message)
+        self.script = script
+
+
+def _tcl_string(value: str) -> str:
+    """Escape literal text embedded in a Tcl double-quoted argument."""
+    return (value.replace("\\", "\\\\").replace('"', '\\"')
+            .replace("$", "\\$").replace("[", "\\[").replace("]", "\\]")
+            .replace("{", "\\{").replace("}", "\\}")
+            .replace("\n", "\\n").replace("\r", "\\r"))
+
+
+def _validate_part_name(part: str) -> None:
+    if (not part or part in {".", ".."} or part.endswith((".", " "))
+            or re.search(r'[<>:"/\\|?*\x00-\x1f]', part)
+            or re.fullmatch(r"(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?", part)):
+        raise ValueError("型号不能用作产物文件名：请去除路径分隔符或非法文件名字符")
+
+
 def render_tcl(layout: SymbolLayout, out_dir: Path) -> str:
     """把布局渲染成 TCL 脚本文本（纯函数，可对拍）。"""
-    part = layout.part_name
+    _validate_part_name(layout.part_name)
+    part = _tcl_string(layout.part_name)
     half_w = layout.body_width // 2
     half_h = layout.half_height
-    posix_dir = Path(out_dir).as_posix()
+    posix_dir = _tcl_string(Path(out_dir).as_posix())
 
     lines: list[str] = [_HEADER]
     lines.append(f'set outDir  "{posix_dir}"')
@@ -126,7 +151,7 @@ def render_tcl(layout: SymbolLayout, out_dir: Path) -> str:
     for index, pin in enumerate(layout.pins):
         lines.append("set s [DboState]")
         lines.append(
-            f'set mPin [$mPart NewSymbolPinScalar $s [DboTclHelper_sMakeCString "{pin.name}"] \\'
+            f'set mPin [$mPart NewSymbolPinScalar $s [DboTclHelper_sMakeCString "{_tcl_string(pin.name)}"] \\'
         )
         lines.append(f"              {PIN_TYPE_PASSIVE} \\")
         lines.append(
@@ -135,11 +160,11 @@ def render_tcl(layout: SymbolLayout, out_dir: Path) -> str:
         lines.append(
             f"              [DboTclHelper_sMakeCPoint {pin.hx} {pin.hy}] 1 {index}]"
         )
-        lines.append(f'if {{[$s Failed]}} {{ die "NewSymbolPinScalar({pin.number})" }}')
+        lines.append(f'if {{[$s Failed]}} {{ die "NewSymbolPinScalar({_tcl_string(pin.number)})" }}')
         lines.append("$mPin SetIsLong 0")
         lines.append("$mPin SetIsNumberVisible 1")
         lines.append(
-            f'$mDevice NewPinNumber [DboTclHelper_sMakeCString "{pin.number}"] '
+            f'$mDevice NewPinNumber [DboTclHelper_sMakeCString "{_tcl_string(pin.number)}"] '
             f"[DboTclHelper_sMakeInt {index}]"
         )
     lines.append("$mLib SavePackageAll $mPkg")
@@ -218,12 +243,15 @@ def generate(
         subprocess.TimeoutExpired: 超时。源程序的 ``web/service.py`` 把这两种
             异常单独接住并降级成"生成失败"，调用方应保持同样的区分。
     """
+    _validate_part_name(layout.part_name)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    exe = resolve_tclsh(tclsh)
-
     script = out_dir / f"{layout.part_name}_gen.tcl"
     script.write_text(render_tcl(layout, out_dir), encoding="utf-8")
+    try:
+        exe = resolve_tclsh(tclsh)
+    except FileNotFoundError as exc:
+        raise CaptureToolchainUnavailable(str(exc), script) from exc
 
     completed = subprocess.run(
         [str(exe), str(script)],
@@ -238,6 +266,9 @@ def generate(
 
     olb = out_dir / f"{layout.part_name}.OLB"
     dsn = out_dir / f"{layout.part_name}.DSN"
-    passed = completed.returncode == 0 and PASS_MARKER in log and olb.is_file() and dsn.is_file()
+    passed = (
+        completed.returncode == 0 and PASS_MARKER in log
+        and all(path.is_file() and path.stat().st_size > 0 for path in (olb, dsn))
+    )
 
     return CaptureResult(log=log, passed=passed, olb=olb, dsn=dsn, script=script)

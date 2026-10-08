@@ -22,6 +22,10 @@ class SymbolDrawingState(TypedDict, total=False):
     mode: str
     # ── 唯一必填输入 ────────────────────────────────────────────
     pdf_path: str
+    original_filename: str
+    device: str
+    package: str
+    strict_pages: bool
     #: 产物落盘目录；留空则用临时目录（源程序的 OUTPUT_DIR 是用户正式库，绝不自动写）
     output_dir: str
 

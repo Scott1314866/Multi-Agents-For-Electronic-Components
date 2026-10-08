@@ -33,6 +33,7 @@ python -s -m pytest -m "not integration"
 ```powershell
 python -s -m pytest tests/test_pcb_package.py
 python -s -m pytest tests/test_symbol_contract.py
+python -s -m pytest tests/test_symbol_contract.py tests/test_symbol_workflow.py tests/test_symbol_api.py
 python -s -m pytest tests/test_step_human_api.py tests/test_step_progress.py tests/test_step_latency.py
 ```
 
@@ -53,10 +54,19 @@ python -s -m pytest --collect-only
 | `tests/test_step_progress.py`、`test_step_latency.py`、`test_step_preview_downloads.py`、`test_step_entrypoints.py` | 执行日志、超时和截断重试、预览下载及应用入口 | 本地运行时依赖；不调用真实模型 |
 | `tests/test_pcb_package.py` | PCB 封装参数派生、规则断言、Allegro skill 文件生成、路由契约 | 单元测试不启动 Allegro；实机 PCB 工具链验证另行进行 |
 | `tests/test_symbol_contract.py` | PDF 表格解析、引脚布局、Capture Tcl 生成与既有 Golden 文件对拍 | Golden fixture；不启动 Capture |
+| `tests/test_symbol_workflow.py`、`test_symbol_api.py` | 型号/封装状态传递、选列、真实 graph 暂停恢复、裁决写回、自检门禁、API 校验与租户隔离、停止原因、Tcl 下载、PDF 工作线程 | 进程内 checkpoint、模拟存储与工具；不连接真实 PostgreSQL/MinerU/视觉模型/Cadence |
 | `tests/test_agentic_web_search.py` | 搜索编排、结果处理和 STEP 参考模型解析 | 网络调用使用 mock |
 | `tests/test_step_image_agent_dip_regression.py` | DIP 图纸真实识别、路由、建模、STEP 回读 | 真实 OCR、Qwen、Jev、Web Search、CadQuery 和本地 DIP 图片；默认跳过 |
 
 所有 pytest 测试默认由 `pytest.ini` 收集。`integration` 标记仅用于需要真实外部服务的回归；默认命令 `-m "not integration"` 会排除它们。
+
+### Symbol Agent 优化回归（2026-10-08）
+
+符号流程现在先确认型号和封装，再选引脚表；人工裁决会写回实际引脚，更换封装会重选表格和引脚图。自检问题及历史答案会保留，自检仍有错误时进入 `stopped_check_failed`，不会调用 Capture。API 会在认领任务前校验回答，并返回自检报告和停止原因。PDF 定位和图页筛选在渲染工作线程执行；没有 Cadence 时仍生成、登记并允许下载 Tcl。Capture 还会检查输出文件非空、校验产物文件名并转义 Tcl 字符串。
+
+本次运行结果：符号专项 **56 passed**（原有 16 项契约测试 + 新增 40 项工作流/API 回归）；项目离线测试 **355 passed、2 failed、1 deselected**。两项非符号失败为 `test_ti_qfn_package_reference_uses_matching_official_step`（STEP 参考搜索返回 `None`）和 `test_golden_set_paths_exist`（缺少 `sample/picture/ADC建模参考图2.png`）。相关 STEP 实现、测试和样例配置未在本次修改。
+
+上述结果验证离线逻辑、真实 LangGraph interrupt/resume、Golden Tcl 字节一致性和模拟 API；未验证真实 PostgreSQL、MinerU、视觉模型服务或 Cadence 执行。完整离线测试的 JUnit 记录位于 `output/symbol_agent/tests/offline-regression.xml`。
 
 ## 真实模型回归
 

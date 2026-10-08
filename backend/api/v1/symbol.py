@@ -31,6 +31,7 @@ from backend.agents.symbol.persistence import (
     invoke_postgres_symbol_graph,
     open_postgres_symbol_job_lock,
 )
+from backend.agents.symbol.human_nodes import validate_human_answer
 from backend.core.logger import get_logger
 from backend.dependencies import AsyncSessionLocal, get_current_user
 
@@ -212,6 +213,7 @@ async def _persist_job_snapshot(drawing_id: str, tenant_id: str, snapshot: dict)
         "pin_page": state.get("pin_page"),
         "graph_status": state.get("status"),
         "result_status": result.get("status"),
+        "reason": result.get("reason"),
         "verdict": result.get("verdict"),
         "score": result.get("score"),
         "confidence": result.get("confidence"),
@@ -285,6 +287,7 @@ def _initial_state(params: dict) -> dict:
     return {
         "task": "generate_symbol",
         "pdf_path": params.get("pdf_path", ""),
+        "original_filename": params.get("original_filename") or "",
         "work_dir": params.get("work_dir") or "",
         "output_dir": params.get("output_dir") or "",
         "strict_pages": bool(params.get("strict_pages")),
@@ -512,6 +515,9 @@ async def get_drawing(
         "verdict": params.get("verdict"),
         "score": params.get("score"),
         "confidence": params.get("confidence"),
+        "check_report": params.get("check_report") or {},
+        "graph_status": params.get("graph_status"),
+        "reason": params.get("reason"),
         "layout_summary": params.get("layout_summary", ""),
         "warnings": params.get("warnings", []),
         "artifacts": sorted((params.get("artifacts") or {}).keys()),
@@ -559,9 +565,15 @@ async def submit_human_input(
             if not pending or pending.get("interrupt_id") != request.interrupt_id:
                 raise HTTPException(status_code=409, detail="人工问题已过期，请刷新后重试")
 
+            try:
+                validated = validate_human_answer(pending, answer)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            validated["_actor"] = answer["_actor"]
+
             params["accepted_input"] = {
                 "interrupt_id": request.interrupt_id,
-                "answer": answer,
+                "answer": validated,
             }
             claimed = await session.execute(
                 text("""

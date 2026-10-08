@@ -76,6 +76,7 @@ def best_table(
     pages: list[int] | None = None,
     *,
     package: str = "",
+    device: str = "",
 ) -> tuple[int, Extraction] | None:
     """逐页试表，返回第一张**真正解析得出引脚**的表。
 
@@ -84,6 +85,7 @@ def best_table(
             0 起页号**（瘦身路径已在 ``mineru`` 层还原过）。
         pages: 候选页（1 起）。给空则全试。
         package: 目标封装代码/型号，用于挑列。
+        device: 目标型号；封装不匹配表头时，用匹配的型号列。
 
     Returns:
         ``(页码, Extraction)``；一张表都没解析出引脚时返回 ``None``，
@@ -101,7 +103,12 @@ def best_table(
             continue
         if wanted and page not in wanted:
             continue
-        extraction = extract_pins_from_table(html, page=page, device=package)
+        extraction = extract_pins_from_table(html, page=page, device=package or device)
+        # Some manuals put model names, rather than package codes, in the number headers.
+        headers = [header.casefold() for header in extraction.headers]
+        if device and package and not any(package.casefold() in header for header in headers):
+            if any(device.casefold() in header for header in headers):
+                extraction = extract_pins_from_table(html, page=page, device=device)
         if len(extraction.pins) >= MIN_TABLE_PINS:
             return page, extraction
     return None

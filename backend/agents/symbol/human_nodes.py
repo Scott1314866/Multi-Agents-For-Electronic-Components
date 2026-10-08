@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from langgraph.types import interrupt
@@ -61,19 +62,28 @@ def _validate_resolutions(answer: dict, request: dict) -> list[dict]:
         for item in (request.get("items") or [])
     }
     normalized: list[dict] = []
+    seen: set[tuple[str, str]] = set()
     for entry in raw:
         if not isinstance(entry, dict):
             raise ValueError("每条裁决必须是 JSON 对象")
         key = (str(entry.get("pin_number") or ""), str(entry.get("field") or ""))
         if key not in allowed:
             raise ValueError(f"当前没有待裁决的 {key[0]} / {key[1]}")
+        if key in seen:
+            raise ValueError(f"重复裁决 {key[0]} / {key[1]}")
+        seen.add(key)
+        value = _text(entry.get("value"), "value", required=True, limit=200)
+        if key[1] == "side" and value not in {"left", "right", "top", "bottom", "unknown"}:
+            raise ValueError("side 只能是 left、right、top、bottom 或 unknown")
         normalized.append(
             {
                 "pin_number": key[0],
                 "field": key[1],
-                "value": _text(entry.get("value"), "value", limit=200),
+                "value": value,
             }
         )
+    if seen != allowed:
+        raise ValueError("请裁决全部待处理项")
     return normalized
 
 
@@ -102,17 +112,28 @@ def validate_human_answer(request: dict, answer: dict) -> dict:
                 raise ValueError("请从 candidates 中选择，或改用 provide 手工填写")
             normalized["value"] = value
         elif action == "provide":
-            normalized["value"] = _text(answer.get("value"), "value", required=True, limit=200)
+            optional = stage == "package" and not request.get("candidates")
+            normalized["value"] = _text(answer.get("value"), "value", required=not optional, limit=200)
     elif stage in {"conflicts", "review_diffs"}:
         if action == "resolve":
             normalized["resolutions"] = _validate_resolutions(answer, request)
     elif stage == "facts":
+        if action == "cancel":
+            normalized["comment"] = _text(answer.get("comment"), "comment", limit=2000)
+            return normalized
         raw = answer.get("values")
         if not isinstance(raw, dict) or not raw:
             raise ValueError("values 必须是非空对象")
-        normalized["values"] = {
+        values = {
             _text(key, "key", required=True, limit=100): _text(value, "value", limit=200)
             for key, value in raw.items()
+        }
+        questions = {str(item.get("key")): item for item in request.get("items") or []}
+        if set(values) != set(questions):
+            raise ValueError("请仅回答当前列出的全部问题")
+        normalized["values"] = {
+            key: value or str(questions[key].get("default") or "")
+            for key, value in values.items()
         }
     normalized["comment"] = _text(answer.get("comment"), "comment", limit=2000)
     return normalized
@@ -180,6 +201,7 @@ async def ask_device_node(state: dict[str, Any]) -> dict[str, Any]:
     picked = _automatic(resolved, candidates[0] if candidates else "", len(candidates), "型号")
     if picked:
         return {
+            "device": picked,
             "device_candidates": candidates,
             "human_device": {"action": "auto", "value": picked, "source": "auto"},
             "human_history": _history(state, "device", {"action": "auto", "value": picked}),
@@ -209,6 +231,7 @@ async def ask_device_node(state: dict[str, Any]) -> dict[str, Any]:
     if answer["action"] == "cancel":
         return _cancelled(state, "device", answer)
     return {
+        "device": answer["value"],
         "human_device": answer,
         "human_history": _history(state, "device", answer),
         "status": "device_chosen",
@@ -222,6 +245,7 @@ async def ask_package_node(state: dict[str, Any]) -> dict[str, Any]:
     picked = _automatic(resolved, candidates[0] if candidates else "", len(candidates), "封装")
     if picked:
         return {
+            "package": picked,
             "human_package": {"action": "auto", "value": picked, "source": "auto"},
             "human_history": _history(state, "package", {"action": "auto", "value": picked}),
             "status": "package_resolved",
@@ -251,16 +275,28 @@ async def ask_package_node(state: dict[str, Any]) -> dict[str, Any]:
     if answer["action"] == "cancel":
         return _cancelled(state, "package", answer)
     return {
+        "package": answer["value"],
         "human_package": answer,
         "human_history": _history(state, "package", answer),
         "status": "package_chosen",
     }
 
 
+def _apply_pin_resolutions(state: dict, chosen: dict[tuple[str, str], str]) -> list[dict]:
+    """Apply reviewed values to copies, preserving the stored evidence."""
+    pins = deepcopy(state.get("merged_pins") or [])
+    for pin in pins:
+        number = str(pin.get("pin_number") or "")
+        for field in ("name", "side", "type", "description"):
+            if (number, field) in chosen:
+                pin[field] = chosen[(number, field)]
+    return pins
+
+
 async def resolve_conflicts_node(state: dict[str, Any]) -> dict[str, Any]:
     """逐条裁决双通道冲突。**不猜** —— 源程序的核心纪律之一。"""
-    conflicts = list(state.get("conflicts") or [])
-    unresolved = [item for item in conflicts if not item.get("resolved")]
+    conflicts = deepcopy(state.get("conflicts") or [])
+    unresolved = [item for item in conflicts if item.get("resolved") is None]
     if not unresolved:
         return {"status": "conflicts_clear"}
 
@@ -296,6 +332,7 @@ async def resolve_conflicts_node(state: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "conflicts": conflicts,
+        "merged_pins": _apply_pin_resolutions(state, chosen),
         "human_conflicts": answer,
         "human_history": _history(state, "conflicts", answer),
         "status": "conflicts_resolved",
@@ -311,8 +348,8 @@ async def resolve_review_diffs_node(state: dict[str, Any]) -> dict[str, Any]:
     """
     from backend.agents.symbol.tools.review import ocr_confusable
 
-    review = dict(state.get("review") or {})
-    mismatches = list(review.get("mismatches") or [])
+    review = deepcopy(state.get("review") or {})
+    mismatches = [item for item in review.get("mismatches") or [] if item.get("resolved") is None]
     if not mismatches:
         return {"status": "review_clear"}
 
@@ -344,9 +381,6 @@ async def resolve_review_diffs_node(state: dict[str, Any]) -> dict[str, Any]:
     if answer["action"] == "cancel":
         return _cancelled(state, "review_diffs", answer)
 
-    review["mismatches"] = [
-        {**item, "resolved": None} for item in mismatches
-    ]
     chosen = {
         (item["pin_number"], item["field"]): item["value"]
         for item in answer["resolutions"]
@@ -358,6 +392,7 @@ async def resolve_review_diffs_node(state: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "review": review,
+        "merged_pins": _apply_pin_resolutions(state, chosen),
         "human_review_diffs": answer,
         "human_history": _history(state, "review_diffs", answer),
         "status": "review_diffs_resolved",
@@ -396,15 +431,17 @@ async def ask_check_questions_node(state: dict[str, Any]) -> dict[str, Any]:
     if answer["action"] == "cancel":
         return _cancelled(state, "facts", answer)
 
-    # 把回答写回 findings，交由 selfcheck 的 apply_answer 语义处理（这里只落值）。
+    # 参数写回后重跑；更换封装还需重选表格列和引脚图。
     report["answered"] = {**report.get("answered", {}), **answer["values"]}
     rounds = int(state.get("check_rounds") or 0) + 1
+    package_changed = answer["values"].get("package", state.get("package", "")) != state.get("package", "")
     return {
+        **{key: value for key, value in answer["values"].items() if key in {"device", "package"}},
         "check_report": report,
         "human_facts": answer,
         "human_history": _history(state, "facts", answer),
         "check_rounds": rounds,
-        "status": "check_answered",
+        "status": "check_package_changed" if package_changed else "check_answered",
     }
 
 
@@ -419,7 +456,12 @@ async def confirm_output_node(state: dict[str, Any]) -> dict[str, Any]:
             "output_dir": state.get("output_dir") or "",
             "part_name": layout.get("part_name", ""),
             "summary": layout.get("summary", ""),
-            "warnings": layout.get("warnings", []),
+            "warnings": [
+                *(state.get("warnings") or []),
+                *(state.get("table_warnings") or []),
+                *layout.get("warnings", []),
+                *[item["title"] for item in (state.get("check_report") or {}).get("findings", []) if item.get("severity") == "warn"],
+            ],
             "fields": {"comment": "可留空"},
         }
     )
