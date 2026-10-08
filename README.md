@@ -107,6 +107,8 @@ python -s -m backend.step_main
 
 对话页会自动更新当前任务的执行日志，显示各步骤的开始、完成、等待确认和耗时。日志随任务存入 PostgreSQL，刷新或切换会话后仍可查看；默认展示最近 12 条，可展开此前日志。状态接口返回 `execution_logs`，每个任务最多保留 600 条。仅记录功能上线后实际执行的步骤，不补写旧任务日志。后台启动日志使用 UTF-8 并立即刷新，输出在 `tmp/server.stdout.log` 和 `tmp/server.stderr.log`。
 
+页面通过 `include_checkpoint=false` 轮询已保存的业务状态，避免重复编译工作流和加载完整证据；提交人工回答时仍会锁定记录并验证实时检查点。视觉 JSON 输出预算为 4096 token，截断时最多重试一次至 8192 token，整次调用最多等待 120 秒，不接受截断结果。此类失败可从当前视图分析恢复，复用 OCR 和此前回答。可选参考模型检索超过 20 秒后继续本地图纸建模；CPU OCR 引擎跨任务复用，首次加载和复杂图纸识别仍可能较慢。
+
 ## STEP API 快速流程
 
 除健康检查外，以下接口需要 `Authorization: Bearer <access_token>`。先调用登录接口取得 token：

@@ -638,7 +638,7 @@
       } else if (q.stage==='dimensions') {
         const intro=document.createElement('div');intro.className='dimension-intro';
         intro.textContent=q.conflict_details?.length?'系统发现尺寸之间有冲突。请根据下面的说明核对相关项目并重新填写；只需填写这次列出的项目，长度默认 mm，引脚数填整数。':'看不懂字段名也没关系，下面已换成中文说明。只填写你能从图纸确认的项目；不确定的可以留空，系统会继续检查。每次至少填写一项。长度单位默认 mm。';box.append(intro);
-        for(const detail of q.conflict_details||[]){const note=document.createElement('p');note.className='dimension-help';note.textContent=detail;box.append(note);}
+        for(const detail of q.conflict_details||[]){const note=document.createElement('p');note.className='dimension-help';note.textContent=String(detail).replace(/\b[a-z]+(?:_[a-z]+)+\b/g,name=>dimensionNames[name]||name);box.append(note);}
         const list=document.createElement('div');list.className='dimension-list';
         const values={}; const previous=(q.previous_answer||{}).values||{};
         for (const [field,spec] of Object.entries(q.fields||{})) {
