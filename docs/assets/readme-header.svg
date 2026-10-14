@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="360" viewBox="0 0 1600 360" role="img" aria-labelledby="title description">
+  <title id="title">Component Foundry</title>
+  <desc id="description">Multi-agent workflows for electronic components: STEP models, PCB footprints and schematic symbols.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1a1b27"/><stop offset=".6" stop-color="#24283b"/><stop offset="1" stop-color="#414868"/></linearGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#414868"/><stop offset="1" stop-color="#7aa2f7"/></linearGradient>
+  </defs>
+  <rect width="1600" height="360" rx="18" fill="url(#background)"/>
+  <g stroke="#7aa2f7" opacity=".12" fill="none" stroke-width="1.5">
+    <path d="M0 82H190V146H275M1600 90H1412V178H1322M30 247H170V208H238M1600 242H1484V222H1400"/>
+    <circle cx="275" cy="146" r="6"/><circle cx="1322" cy="178" r="6"/><circle cx="238" cy="208" r="6"/><circle cx="1400" cy="222" r="6"/>
+  </g>
+  <text x="800" y="65" text-anchor="middle" fill="#7aa2f7" font-family="JetBrains Mono,Consolas,monospace" font-size="16" letter-spacing="4">MULTI-AGENTS FOR ELECTRONIC COMPONENTS</text>
+  <text x="800" y="146" text-anchor="middle" fill="#c0caf5" font-family="Trebuchet MS,Arial,sans-serif" font-size="78" font-weight="700">Component Foundry</text>
+  <text x="800" y="194" text-anchor="middle" fill="#a9b8dd" font-family="Trebuchet MS,Arial,sans-serif" font-size="25">STEP models · PCB footprints · Schematic symbols</text>
+  <g font-family="JetBrains Mono,Consolas,monospace" font-size="15" text-anchor="middle">
+    <rect x="504" y="228" width="168" height="34" rx="17" fill="#7aa2f7" fill-opacity=".12" stroke="#7aa2f7" stroke-opacity=".4"/>
+    <text x="588" y="251" fill="#7aa2f7">READ</text>
+    <path d="M690 245h24m-7-5 7 5-7 5" fill="none" stroke="#65708c" stroke-width="2"/>
+    <rect x="716" y="228" width="168" height="34" rx="17" fill="#9ece6a" fill-opacity=".1" stroke="#9ece6a" stroke-opacity=".4"/>
+    <text x="800" y="251" fill="#9ece6a">REVIEW</text>
+    <path d="M902 245h24m-7-5 7 5-7 5" fill="none" stroke="#65708c" stroke-width="2"/>
+    <rect x="928" y="228" width="168" height="34" rx="17" fill="#ff9e64" fill-opacity=".1" stroke="#ff9e64" stroke-opacity=".4"/>
+    <text x="1012" y="251" fill="#ff9e64">GENERATE</text>
+  </g>
+  <path d="M0 308C290 260 392 353 680 317S1114 270 1600 317V360H0Z" fill="#414868" opacity=".6"/>
+  <path d="M0 335C340 290 468 384 844 338S1290 316 1600 330V360H0Z" fill="url(#wave)" opacity=".7"/>
+</svg>
