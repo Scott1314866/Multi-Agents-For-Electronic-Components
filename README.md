@@ -1,223 +1,218 @@
-# 器件图纸智能解析与 STEP 数模生成
+<div align="center">
 
-面向电子元器件工程图的 AI 辅助建模服务。当前可运行的后端以 STEP Agent 为主：接收二维图纸，提取并复核尺寸证据，按器件族生成 CAD 模型及 STEP 文件和多视图预览；遇到封装、路由、尺寸或审核问题时暂停任务，等待操作员通过 API 回答。任务状态与 LangGraph checkpoint 保存在 PostgreSQL 中，可在服务重启后继续。
+<img src="docs/assets/readme-header.svg" width="100%" alt="Component Foundry — Multi-Agents for Electronic Components" />
 
-## 功能概览
+**从器件图纸与手册，到 STEP 数模、PCB 焊盘与原理图符号。**
 
-- **图纸到 STEP**：识别工程图视图、文字和尺寸，融合尺寸证据，选择已实现的器件族模板，并构造和验证 CAD 模型。
-- **人工参与**：在封装选择、模板路由、缺少尺寸或最终审核阶段暂停，记录操作员输入；人工补充的尺寸与图纸证据分开保存。
-- **任务持久化**：使用 PostgreSQL 保存任务、checkpoint 和回答记录；启动时迁移所需业务表并恢复可恢复任务。
-- **鉴权与租户隔离**：登录 API 签发 JWT，任务查询和文件下载按租户隔离。
-- **统一工作台**：默认应用挂载认证、STEP、PCB、Symbol 和工作台 API；问答、检索和 PDF 处理模块不作为独立 API 挂载。
+<p>
+<img src="https://img.shields.io/badge/STEP-CadQuery-7aa2f7?style=for-the-badge&labelColor=1a1b27" alt="STEP / CadQuery" />
+<img src="https://img.shields.io/badge/PCB-Allegro-9ece6a?style=for-the-badge&labelColor=1a1b27" alt="PCB / Allegro" />
+<img src="https://img.shields.io/badge/Symbol-Capture-bb9af7?style=for-the-badge&labelColor=1a1b27" alt="Symbol / Capture" />
+<img src="https://img.shields.io/badge/Status-Engineering%20Preview-ff9e64?style=for-the-badge&labelColor=1a1b27" alt="Engineering preview" />
+</p>
 
-## 技术栈
+<p>
+<a href="#overview">项目概览</a> ·
+<a href="#workflows">三个 Agent</a> ·
+<a href="#previews">效果预览</a> ·
+<a href="#quickstart">启动指南</a> ·
+<a href="#docs">文档导航</a>
+</p>
 
-Python、FastAPI、LangGraph、PostgreSQL、SQLAlchemy、Pydantic Settings、CadQuery，以及兼容 OpenAI API 的 DeepSeek 和 Qwen 模型服务。
+</div>
 
-## 项目结构
+<a id="overview"></a>
+
+## 🧭 项目概览
+
+**Component Foundry** 是面向电子元器件的多 Agent 工程工作台。上传封装尺寸图、推荐焊盘图或器件手册，分别由 STEP、PCB、Symbol Agent 读取资料、核对参数并生成对应的工程文件。
+
+遇到缺少尺寸、符号绑定不清或引脚位置冲突，任务会询问需要补充的项目。原始资料、人工修订、执行记录和检查点会保留，便于复核结果及继续未完成的任务。
+
+> 读清图纸，核对参数，再生成可复核的工程文件。
+
+- 🧩 **一个工作台，三条工作流**：统一上传、任务历史、参数核对、预览与下载。
+- 📐 **尺寸与来源对应**：保留图纸候选、尺寸单位、人工补充和修改记录。
+- 👁️ **填写时看见几何**：PCB 修改焊盘坐标、形状和尺寸时同步更新顶视预览。
+- 🔁 **任务可恢复**：PostgreSQL 保存状态、人工回答与 LangGraph checkpoint。
+- 🖥️ **本机或远端执行**：PCB 和 Symbol 可选择安装了 Cadence 的 Windows 设备。
+
+<a id="workflows"></a>
+
+## 🤖 三个 Agent
+
+| Agent | 输入资料 | 主要工作 | 输出 |
+|:--|:--|:--|:--|
+| **📐 STEP** | 封装尺寸图、器件工程图 | 视图识别、尺寸证据复核、器件族路由、参数化建模与几何校验 | `.step`、等轴测图和三个正交视图 |
+| **🟡 PCB** | 推荐焊盘图、封装尺寸图；可追加辅助图片或 PDF | 逐焊盘核对脚号、位置与铜盘尺寸，生成并检查原生封装 | `.dra`、`.psm`、`.pad`、SVG / PNG 预览及执行日志 |
+| **🔌 Symbol** | PDF 手册或封装引脚图 | 提取引脚编号与名称、核对布局，调用 Capture 生成符号 | `.olb`、`.dsn`、Tcl 与执行日志 |
+
+### 📐 STEP · 按图纸建模
+
+已有器件族包括 D-Sub、两侧／四侧鸥翼 IC、QFN、片式电阻和电容；具体图纸仍须通过尺寸证据与几何校验。
+
+两侧鸥翼 IC 按顶视图分为**上侧引脚**和**下侧引脚**，分别记录数量、宽度、脚底长度、金属厚度和首末中心距。支持 3＋1、3＋2 等不同排布；单脚侧的首末中心距为 0。独立设置两侧脚长或厚度时，需要核对两侧参数。
+
+### 🟡 PCB · 边填写，边核对
+
+尺寸确认页面提供逐焊盘编辑、新增／删除、相同宽度批量调整和即时顶视预览。矩形与圆形焊盘均可显示；圆形焊盘按直径填写，两个尺寸轴同步。
+
+图中有明确引脚定义时，脚号按位置核对。缺少推荐焊盘图的任务可结合封装图补充参数；尺寸来源不明确时进入追问，具体生成范围见 [PCB 说明](backend/agents/pcb/README.md)。
+
+### 🔌 Symbol · 从手册到原生符号
+
+PDF 与图片使用各自的读取流程。清晰的引脚图通过自检后可直接生成；PDF 保留引脚核对及生成前确认。任务支持分页历史、可恢复删除、原始资料下载和 checkpoint 回溯。
+
+<a id="previews"></a>
+
+## 👁️ 效果预览
+
+下面是项目实际导出的预览：左侧为 SOT223 的 3＋1 引脚包络模型，右侧为 15 个圆形焊盘的铜箔与阻焊预览。
+
+<table>
+<tr>
+<td align="center" width="50%">
+<a href="docs/step-human-interaction.md"><img src="docs/assets/step-sot223-envelope.png" width="100%" alt="SOT223 顶视包络模型：上侧一个宽端子，下侧三个窄引脚" /></a>
+<p><strong>📐 STEP · 独立两侧引脚</strong><br /><sub>分别核对数量与宽度，输出模型及多视图</sub></p>
+</td>
+<td align="center" width="50%">
+<a href="frontend/pcb/README.md"><img src="docs/assets/pcb-round-preview.png" width="100%" alt="PCMF3USB3B_C 的十五个圆形焊盘及脚号预览" /></a>
+<p><strong>🟡 PCB · 圆形焊盘阵列</strong><br /><sub>铜箔、阻焊与脚号按参数生成</sub></p>
+</td>
+</tr>
+</table>
+
+PCB **填写阶段的即时预览**会随表格变化更新；上面的图片是**生成后的产物预览**。STEP 当前在生成模型后显示四个视图，尚未提供填写尺寸时的实时三维预览。包络模型中未完整描述的折弯等细节仍需核对原图。
+
+<a id="stack"></a>
+
+## 🧰 技术栈与执行方式
+
+<div align="center">
+
+<img src="https://img.shields.io/badge/Python-FastAPI-7aa2f7?style=flat-square&labelColor=1a1b27" alt="Python and FastAPI" />
+<img src="https://img.shields.io/badge/Agents-LangGraph%20%7C%20MCP-bb9af7?style=flat-square&labelColor=1a1b27" alt="LangGraph and MCP" />
+<img src="https://img.shields.io/badge/State-PostgreSQL-9ece6a?style=flat-square&labelColor=1a1b27" alt="PostgreSQL persistence" />
+<img src="https://img.shields.io/badge/OCR-PaddleOCR-7aa2f7?style=flat-square&labelColor=1a1b27" alt="PaddleOCR" />
+<img src="https://img.shields.io/badge/CAD-CadQuery%20%7C%20OpenCascade-ff9e64?style=flat-square&labelColor=1a1b27" alt="CadQuery and OpenCascade" />
+
+</div>
 
 ```text
-backend/
-  api/v1/             FastAPI 路由：认证、STEP、PCB、Symbol 和工作台
-  agents/step/        STEP 图纸解析、证据复核、器件族模板和 CAD 执行
-  agents/pcb/         PCB Agent 模块
-  agents/symbol/      符号 Agent 模块
-  agents/pdf/         PDF Agent 说明及相关资源
-  core/               模型工厂、日志、重试和异常处理
-  db/                 数据库迁移
-  main.py             统一应用、启动与三个 Agent 的后台任务恢复
-docs/
-  step-human-interaction.md  STEP 人工交互、API、恢复行为及终端验证说明
-scripts/
-  init_db_package.sql        PostgreSQL 初始表结构
-tests/                       自动化测试和回归样例
-sample/                      本地样例文件（被 Git 忽略）
-output/                      生成文件（被 Git 忽略）
+图纸 / 手册 → 识别与证据绑定 → 参数核对 → 生成与校验 → 工程文件 / 预览
+                              │
+               PostgreSQL：任务状态 · 回答记录 · Checkpoint
 ```
 
-## 环境准备
+STEP 在后端执行 CadQuery / OpenCascade。PCB 与 Symbol 调用 Windows 上的 Allegro / Capture，支持本机或 SSH；同一设备共用执行队列。前端由 FastAPI 同源提供，无需额外构建步骤。
 
-公司工作机的部署使用根目录 `docker-compose.yml` 管理依赖服务，应用及 Cadence 在 Windows 宿主机运行。邀请码注册、外部数据卷配置和现有容器迁移步骤见 [公司试用版部署说明](docs/company-pilot部署说明.md#docker-compose-依赖服务配置)。
+<a id="quickstart"></a>
 
-- Python 3.11 或更高版本；CadQuery 及其几何内核需要兼容的运行环境。
-- PostgreSQL，且应用账号有权创建/更新 LangGraph checkpoint 表和 STEP 业务表。
-- DeepSeek 对话模型和 Qwen 视觉模型的 API 凭据及 OpenAI 兼容接口地址。
-- 项目依赖。仓库根目录的 `requirements.txt` 是当前环境的包版本清单，格式不是 pip requirements 格式，不能直接用 `pip install -r requirements.txt` 安装。部署时请根据目标环境准备可安装的依赖清单；当前项目还依赖 `langgraph-checkpoint-postgres` 和 `psycopg[binary,pool]`。
+## 🚀 启动指南
 
-## 配置
+### 1. 准备运行环境
 
-在项目根目录创建本地 `.env.local`。该文件已被 Git 忽略，请勿提交真实凭据。至少配置数据库账号、JWT 签名密钥，以及模型服务参数：
+- Python 3.11+，以及兼容的 CadQuery / OpenCascade 环境。
+- PostgreSQL、项目运行依赖，以及模型服务配置。
+- 生成原生 PCB / Symbol 文件时，需要安装相应 Cadence 程序并配置可用许可。
+
+`requirements.txt` 当前是环境版本清单，**不能直接用 `pip install -r requirements.txt` 安装**。依赖准备、初始数据库和账号配置见 [完整安装与 API 指南](docs/getting-started.md)；工作机部署见 [公司试用版部署说明](docs/company-pilot部署说明.md)。Compose 使用已配置的外部数据卷和网络，迁移步骤也在部署说明中。
+
+### 2. 配置本地参数
+
+在项目根目录创建 `.env.local`，填写数据库、JWT 签名密钥及模型服务参数。示例值需要替换为自己的配置：
 
 ```dotenv
 DB_HOST=localhost
-DB_PORT=5432
+DB_PORT=5433
 DB_NAME=agent
 DB_USER=your_db_user
 DB_PASSWORD=your_db_password
-
 JWT_SECRET_KEY=replace_with_a_long_random_secret
 
 DEEPSEEK_API_KEY=your_deepseek_api_key
 DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 DEEPSEEK_MODEL_CHAT=your_chat_model
-
 QWEN_API_KEY=your_qwen_api_key
 QWEN_BASE_URL=https://your-qwen-compatible-endpoint/v1
 QWEN_MODEL_VL=your_vision_model
 ```
 
-配置由 [backend/config.py](backend/config.py) 的 `Settings` 定义，也可通过环境变量提供。默认数据库名为 `agent`，默认端口为 `5433`；上例显式使用 PostgreSQL 常见的 `5432`，请按实际实例修改。
+端口须与实际数据库一致；上例采用当前 Compose 的默认宿主机映射。完整配置项由 [Settings](backend/config.py) 定义，`.env.local` 不随仓库提交。服务没有内置默认账号，请按安装／部署指南初始化账户。
 
-首次启动前，在目标数据库执行一次初始表结构脚本：
+### 3. 启动统一工作台
 
-```powershell
-psql -h localhost -p 5432 -U your_db_user -d agent -f scripts/init_db_package.sql
-```
-
-该脚本创建用户、STEP 任务等业务表。应用启动时的迁移会更新已有的 `step_drawings` 表，但不会代替初始建库。LangGraph PostgreSQL saver 所需表会由其组件初始化。
-
-登录前还需在 `users` 表准备有效用户，并存储 bcrypt 密码哈希；应用没有内置默认账号。
-
-## 启动服务
-
-本机使用 conda 的 `ima-agent` 环境，可直接运行下面的启动脚本（数据库容器应已启动）：
-
-```powershell
-.\scripts\start_project.ps1
-# 在后台运行：
-.\scripts\start_project.ps1 -Background
-```
-
-脚本使用 `D:\Anaconda_envs\envs\ima-agent\python.exe`，也可通过 `-PythonPath` 指定其他解释器。启动前检查运行依赖，并通过 Python 的 `-s` 参数禁用用户目录包，避免用户目录中旧版 LangGraph 覆盖 conda 环境的依赖。手动启动已激活的 conda 环境时使用 `python -s -m backend.main`。
-
-在 Windows PowerShell 中，从项目根目录运行：
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -s -m backend.main
-```
-
-以上 venv 命令仅创建虚拟环境；请先在目标环境安装项目及 CadQuery、PostgreSQL saver 等运行依赖。若已有可用的项目环境，直接使用该环境中的 Python 启动即可。
-
-唯一后端入口为 `backend.main`；应用、生命周期和启动逻辑均在 `backend/main.py`。从项目根目录启动：
+完成依赖、数据库和账号初始化后，在项目根目录使用准备好的 Python 环境运行：
 
 ```powershell
 python -s -m backend.main
 ```
 
-服务默认监听 `0.0.0.0:8000`。本机首页进入 [统一工程工作台](http://127.0.0.1:8000/api/v1/workbench/ui)，集中提交 STEP、Symbol 与 PCB 任务，选择 Cadence 设备并处理人工核对。其他局域网设备使用 `http://运行服务的电脑IPv4地址:8000/`，不能把 `0.0.0.0` 当作访问地址；启动脚本会显示实际局域网地址。三个 Agent 沿用原有检查点与恢复机制；Symbol、PCB 共用同设备执行队列。接口与部署说明见 [工作台文档](frontend/workbench/README.md)。健康检查为 `GET /health`，OpenAPI 文档为 `/docs`。
+Windows 已配置环境也可使用 `scripts/start_project.ps1`，通过 `-PythonPath` 指定解释器。
 
-公司试用版通过工作机的局域网地址访问，工作台路径为 `/api/v1/workbench/ui`，邀请码注册路径为 `/api/v1/auth/ui`。管理员可生成、限定名额和撤销邀请码；普通用户加入公司共享工作区。部署、账号、备份与上线验收见 [公司试用版说明](docs/company-pilot部署说明.md)。数据库就绪检查为 `GET /api/v1/workbench/ready`。
+| 入口 | 本机地址 |
+|:--|:--|
+| **统一工程工作台** | <http://127.0.0.1:8000/api/v1/workbench/ui> |
+| STEP / PCB / Symbol 独立页面 | `/api/v1/step/ui` · `/api/v1/pcb/ui` · `/api/v1/symbol/ui` |
+| 邀请码注册 | `/api/v1/auth/ui` |
+| API 文档 | <http://127.0.0.1:8000/docs> |
+| 健康 / 数据库就绪检查 | `/health` · `/api/v1/workbench/ready` |
 
-PCB 独立页面为 [PCB 封装工作台](http://127.0.0.1:8000/api/v1/pcb/ui)。前端在 `frontend/pcb/`，API 在 `backend/api/v1/pcb.py`；与统一工作台共用 `frontend/shared/` 的核对交互和样式，直接调用 PCB 图片输入接口。详见 [PCB 前端文档](frontend/pcb/README.md)。
+局域网访问时，将 `127.0.0.1` 替换为运行服务的电脑地址。应用唯一入口为 `backend.main`；配置、接口调用与远端执行的完整示例在 [安装与 API 指南](docs/getting-started.md)。
 
-对话页会自动更新当前任务的执行日志，显示各步骤的开始、完成、等待确认和耗时。日志随任务存入 PostgreSQL，刷新或切换会话后仍可查看；默认展示最近 12 条，可展开此前日志。状态接口返回 `execution_logs`，每个任务最多保留 600 条。仅记录功能上线后实际执行的步骤，不补写旧任务日志。后台启动日志使用 UTF-8 并立即刷新，输出在 `tmp/server.stdout.log` 和 `tmp/server.stderr.log`。
+<a id="structure"></a>
 
-页面通过 `include_checkpoint=false` 轮询已保存的业务状态，避免重复编译工作流和加载完整证据；提交人工回答时仍会锁定记录并验证实时检查点。视觉 JSON 输出预算为 4096 token，截断时最多重试一次至 8192 token，整次调用最多等待 120 秒，不接受截断结果。此类失败可从当前视图分析恢复，复用 OCR 和此前回答。可选参考模型检索超过 20 秒后继续本地图纸建模；CPU OCR 引擎跨任务复用，首次加载和复杂图纸识别仍可能较慢。
+## 🗂️ 项目结构
 
-## STEP API 快速流程
-
-除健康检查外，以下接口需要 `Authorization: Bearer <access_token>`。先调用登录接口取得 token：
-
-```http
-POST /api/v1/auth/login
-Content-Type: application/json
-
-{"username":"your_username","password":"your_password"}
+```text
+backend/
+  agents/step/       图纸解析、器件族模板、CAD 生成与校验
+  agents/pcb/        焊盘识别、尺寸核对、Allegro 原生执行
+  agents/symbol/     引脚读取、布局、自检、Capture 原生执行
+  api/               Agent API、统一工作台、来源附件与设备配置
+  core/              模型调用、日志、鉴权与设备队列
+  db/                数据库迁移
+  main.py            统一应用入口与任务恢复
+frontend/            统一工作台、独立页面与共享核对组件
+scripts/             启动、初始化、部署及原生执行脚本
+tests/               自动化测试与回归样例
+docs/                使用说明、部署指南及测试记录
 ```
 
-随后上传图纸并读取任务状态：
+<a id="docs"></a>
 
-```http
-POST /api/v1/step/generate
-Authorization: Bearer <access_token>
-Content-Type: multipart/form-data
+## 📚 文档导航
 
-message=请根据这张工程图生成 STEP 模型
-file=@drawing.png
-```
+| 想了解什么 | 文档 |
+|:--|:--|
+| 安装、配置、登录和 API 调用 | [安装与 API 指南](docs/getting-started.md) |
+| 统一工作台、设备选择及队列 | [工作台说明](frontend/workbench/README.md) |
+| STEP 尺寸补充、模型审核及恢复 | [STEP 人工交互](docs/step-human-interaction.md) |
+| PCB Agent 与逐焊盘输入 | [PCB Agent](backend/agents/pcb/README.md) · [PCB 页面](frontend/pcb/README.md) |
+| Windows 工作机与远端执行 | [工作机部署](docs/workstation-deployment.md) |
+| 邀请码、依赖服务、备份与上线验收 | [公司试用版部署](docs/company-pilot部署说明.md) |
+| 离线测试、实机回归及已知问题 | [测试指南](docs/testing.md) |
 
-接口返回 `202 Accepted` 和 `drawing_id`。客户端轮询 `GET /api/v1/step/drawings/{drawing_id}`；若返回 `pending_input`，应向用户展示当前问题，并把其回答提交到响应中的 `human_input_url`。回答必须带当前的 `interrupt_id`：
+<a id="validation"></a>
 
-```http
-POST /api/v1/step/drawings/{drawing_id}/human-input
-Authorization: Bearer <access_token>
-Content-Type: application/json
-
-{"interrupt_id":"<当前问题 ID>","answer":{"action":"provide","package_type":"TSSOP-16"}}
-```
-
-成功产物可通过响应中的鉴权地址下载：STEP 文件、等轴图、前视图、俯视图和右视图。任务状态、可用回答和终态说明见 [STEP 人工交互文档](docs/step-human-interaction.md)。
-
-## Symbol Agent 与 Cadence
-
-启动后端后，打开 [Symbol 符号工作台](http://127.0.0.1:8000/api/v1/symbol/ui)，使用现有账号登录。页面代码位于 `frontend/symbol/`，由后端提供同源静态页面，无需 npm 构建或单独启动前端。STEP 页侧栏也提供 Symbol 入口，两者共用当前浏览器会话的登录凭据。
-
-工作台同时支持 PDF 手册（最多 64 MB）与单张封装引脚图 PNG、JPG、WEBP、BMP（最多 32 MB、3200 万像素），自动按文件类型选择流程，型号与封装可选。PDF 经手册解析、引脚核对及生成确认后生成 OLB/DSN；可选“仅解析引脚与封装章节”。图片直接读取图中的引脚编号、名称、所在边和坐标，还原主体比例、引脚顺序及对齐关系，通过自检后自动生成。清晰的图片无需重复复核或生成前确认；只有看不清的名称或位置需要补充。图片流程不调用 MinerU，未标注的电气类型使用 PAS，不从名称推断。
-
-页面提供分页历史、任务恢复、布局缩放、引脚清单、自检、OLB/DSN/Tcl/日志和原始文件下载。填写中的表单在轮询时保留；任务切换会忽略旧请求的响应；登录过期时返回登录页。历史任务可继续查询、恢复及下载原始文件。
-
-PDF 流程保留自动复核：大小写/空白差异、明确的 EP/EPAD 别名，以及由编号、图中位置和手册通道描述共同验证的 OCR 字形差异可自动处理，并记录依据。真实名称/位置冲突、低置信度和证据不足的差异才进入人工表单。已验证的独立裸露焊盘若未画在外围图中，会默认放在底部并注明；缺脚和编号错误仍由自检拦截。
-
-历史任务支持删除和恢复。删除设置 `symbol_drawings.deleted_at`，从正常列表移除，保留业务记录、checkpoint 与文件；“已删除”列表可查看、下载回溯记录或恢复任务。运行中的任务拒绝删除，已删除任务不会被启动恢复或接受人工输入。删除/恢复操作的时间与操作者保存在 `package_params.lifecycle_events`。
-
-Symbol 的每步 state 和人工暂停点由 PostgreSQL `AsyncPostgresSaver` 保存，thread ID 为 `symbol:<drawing_id>`，存储在 `checkpoints`、`checkpoint_blobs`、`checkpoint_writes`；任务摘要、最新引脚/布局、自检和确认记录在 `symbol_drawings.package_params`。图片识别的原始结果和几何坐标也保存到 state。原始 PDF/图片、归一化图片、MinerU 中间文件及 OLB/DSN/Tcl/日志保存在本机任务目录 `output/symbol_agent/<drawing_id>/`，数据库保存路径。工作台的“回溯记录”下载最新完整 state、业务摘要及最多 100 个历史 checkpoint 索引；超过时返回游标供继续读取，索引包含各快照的完整 state 查询地址。
-
-回溯 API 均按登录租户校验，已删除任务也可读取：`GET /api/v1/symbol/drawings/{id}/trace` 导出摘要与最新 state；`GET .../{id}/checkpoints?limit=20&before={checkpoint_id}` 从新到旧分页列出快照；`GET .../{id}/checkpoints/{checkpoint_id}` 读取某一步完整 state。`DELETE .../{id}` 删除可见任务，`POST .../{id}/restore` 恢复；`GET /api/v1/symbol/drawings?deleted=true` 查询已删除列表。不存在或属于其他任务的 checkpoint 不返回伪造的空快照。
-
-图片任务通过自检后，agent 自动生成 Tcl，调用 Cadence 的 `tclsh.exe` 和 DBO DLL，生成原生 `.OLB` 符号库及放置一个符号实例的 `.DSN` 原理图。PDF 任务保留生成前确认。无需手动打开 Tcl。每次执行使用独立目录；退出码为 0、日志出现 PASS、两个产物的二进制格式验证通过，才将任务标记为完成。Tcl 和 `capture.log` 可下载；缺少安装环境会停止并保留 Tcl，许可失败或超时会返回失败原因和日志。
-
-使用者在运行 agent 的 Windows 设备上安装 Cadence，并具有可用的 Capture 许可。默认 `SYMBOL_CAPTURE_MODE=local`，会探测常见 `C:/Cadence/SPB_*`、`D:/Cadence/SPB_*` 安装。其他路径可在 `.env.local` 设置：
-
-```dotenv
-SYMBOL_CAPTURE_MODE=local
-CADENCE_INSTALL_DIR=C:/Cadence/SPB_17.2
-SYMBOL_CAPTURE_TIMEOUT=300
-```
-
-也可用 `CADENCE_TCLSH` 指定运行器、`CADENCE_DBO_DLL` 指定 DLL；未指定 DLL 时使用运行器同目录的 `orDb_Dll_Tcl64.dll`，保持同一版本。配置修改后重启后端。
-
-如果 agent 与 Cadence 位于不同的 Windows 设备，可由服务端选择 SSH 模式：
-
-```dotenv
-SYMBOL_CAPTURE_MODE=ssh
-SYMBOL_SSH_HOST=192.168.1.20
-SYMBOL_SSH_USER=your_username
-SYMBOL_SSH_PORT=22
-SYMBOL_SSH_PRIVATE_KEY=C:/Users/your_username/.ssh/cadence_key
-SYMBOL_SSH_KNOWN_HOSTS=C:/Users/your_username/.ssh/known_hosts
-SYMBOL_SSH_TCLSH=C:/Cadence/SPB_17.2/tools/bin/tclsh.exe
-SYMBOL_SSH_DBO_DLL=C:/Cadence/SPB_17.2/tools/bin/orDb_Dll_Tcl64.dll
-```
-
-SSH 模式需要 agent 设备的 OpenSSH `ssh/scp` 客户端，以及远端 Windows OpenSSH 服务、已配置的公钥登录和已核对的主机密钥。使用可供后台进程读取的私钥；agent 不交互询问密码，不自动接受未知主机。远端任务默认保存在 `%LOCALAPPDATA%/symbol-agent/runs/<唯一任务目录>`；可通过 `SYMBOL_SSH_REMOTE_ROOT` 指定绝对路径。Tcl 上传和产物下载校验 SHA256；OLB/DSN 和日志回传到当前任务目录。许可服务应由使用者正常配置，agent 不重启许可服务。
-
-Symbol API 位于 `/api/v1/symbol`。状态接口返回 `capture_execution`、`capture_log_tail` 和产物列表；用 `/api/v1/symbol/drawings/{drawing_id}/artifacts/{artifact_name}` 下载 `tcl`、`olb`、`dsn` 或 `capture_log`，沿用鉴权和任务目录校验。
-
-| 接口 | 用途 |
-| --- | --- |
-| `POST /api/v1/symbol/generate` | multipart 上传 PDF/图片 `file`，可附 `device`、`package`、`strict_pages`（仅 PDF），返回 202 和任务 ID |
-| `GET /api/v1/symbol/drawings?limit=20&offset=0` | 当前租户的分页历史，返回 `items` 与 `has_more` |
-| `GET /api/v1/symbol/drawings/{drawing_id}` | 状态、`pending_input`、引脚 `pins`、布局 `layout`、自检、确认历史和下载链接 |
-| `POST /api/v1/symbol/drawings/{drawing_id}/human-input` | 提交当前 `interrupt_id` 和阶段对应的 `answer`，继续工作流 |
-| `GET /api/v1/symbol/drawings/{drawing_id}/source` | 下载原始 PDF 手册或封装图片 |
-| `GET /api/v1/symbol/drawings/{drawing_id}/artifacts/{artifact_name}` | 下载任务文件 |
-
-页面资源无需登录即可加载；任务、原图和产物接口都需要 Bearer Token。下载由前端携带鉴权头发起，不把 token 放进 URL。源文件与产物均检查所属租户及任务目录，任务 ID 在查询数据库前校验 UUID。
-
-## 测试与开发
-
-测试范围、环境配置、真实模型回归及端到端验证方式见 [测试指南](docs/testing.md)。在包含测试依赖的项目环境中运行默认离线测试集：
+## 🧪 验证与当前边界
 
 ```powershell
 python -s -m pytest -m "not integration"
+node --test frontend/tests/*.test.mjs
 ```
 
-STEP API 端到端验证脚本、人工交互示例及其退出码说明见 [STEP 人工交互文档](docs/step-human-interaction.md)。
+浏览器测试需要 Playwright 与 Chromium；环境准备见测试指南。2026-10-14 的记录：前端 **32 项通过**；后端 **692 项通过、2 项既有失败**，另有 2 项集成测试未运行。失败为 TI 封装参考模型搜索返回 `None`、Golden 样例缺少 ADC 参考图，详情已保留在测试文档。
 
-## 当前边界
+- STEP 只覆盖已实现且通过证据门禁的器件族，包络模型与精确器件模型须区分。
+- 原生 CAD 进程退出时的堆错误仍待修复；几何检查通过不代表运行进程已稳定。
+- 本机／SSH Cadence 生成需要实际安装环境和许可；设备“已配置”不等于连接或许可已验证。
+- `sample/`、`output/`、`tmp/`、运行缓存与本地凭据不随代码提交。
 
-- STEP 自动化只覆盖已实现且能通过证据门禁的器件族；不支持或证据不足的任务会报告原因、询问补充信息或停止，不应将人工批准视为模型校验通过。
-- 使用人工补充尺寸生成的结果会进入审核流程；请在批准前核对尺寸证据、验证结果、STEP 文件和预览图。
-- `backend/api/router.py` 中的 QA 等路由不等同于默认应用已启用的接口。默认应用注册认证、STEP、PCB 和 Symbol 路由。
-- `sample/`、`output/` 和本地环境文件被 Git 忽略，不会随仓库提交。
+<div align="center">
+
+---
+
+<sub>Built by <a href="https://github.com/Scott1314866">Scott Cui</a> · 图纸识别 · 参数核对 · 工程生成</sub>
+
+</div>
