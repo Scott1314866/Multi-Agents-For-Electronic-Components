@@ -16,9 +16,8 @@
 （所以"100 个引脚全堆左边"的废符号也能报 PASS），迁移后它成为必经节点，
 它提出的问题就在这里问。
 
-纪律：**冲突与差异一律停下来问人，绝不猜**。复核差异中若两侧是 O/0 这类
-易混字形，源程序把默认值改成"复核值"（``cli.py:103-108``）—— 这个判断留在
-节点里做，提示词里把依据一并给操作员。
+规则可验证的名称差异自动处理并留记录；真正的冲突与证据不足才询问。
+仅凭 O/0 等字形相似不能自动改写，必须有编号、位置和手册描述的佐证。
 """
 
 from __future__ import annotations
@@ -296,8 +295,40 @@ def _apply_pin_resolutions(state: dict, chosen: dict[tuple[str, str], str]) -> l
 async def resolve_conflicts_node(state: dict[str, Any]) -> dict[str, Any]:
     """逐条裁决双通道冲突。**不猜** —— 源程序的核心纪律之一。"""
     conflicts = deepcopy(state.get("conflicts") or [])
+    # An exposed pad is not a peripheral edge pin. Give a fully verified pad a
+    # schematic position instead of asking the user to resolve an absent edge.
+    from backend.agents.symbol.contracts.models import Pin
+    from backend.agents.symbol.contracts.review_policy import verified_exposed_pad
+
+    pin_dicts = deepcopy(state.get("merged_pins") or [])
+    pins = [Pin(pin_number=str(p.get("pin_number") or ""), name=str(p.get("name") or ""),
+                type=str(p.get("type") or "PAS"), side=p.get("side", "unknown"),
+                description=str(p.get("description") or "")) for p in pin_dicts]
+    pad = verified_exposed_pad(pins, str(state.get("package") or ""))
+    automatic = []
+    if pad and all(p.side in {"left", "right", "top", "bottom"}
+                   for p in pins if p.pin_number != pad.pin_number):
+        for conflict in conflicts:
+            if (conflict.get("resolved") is None and conflict.get("pin_number") == pad.pin_number
+                    and conflict.get("field") == "side" and pad.side == "unknown"
+                    and conflict.get("values", {}).get("vision") == "引脚图中未出现"):
+                conflict.update(resolved="bottom", resolution_source="layout_rule",
+                                reason="已验证裸露焊盘不属于外围引脚，默认放在符号底部")
+                for p in pin_dicts:
+                    if p["pin_number"] == pad.pin_number:
+                        p.update(side="bottom", side_order=sum(q.get("side") == "bottom"
+                                 for q in pin_dicts if q["pin_number"] != pad.pin_number))
+                automatic.append({"pin_number": pad.pin_number, "field": "side", "value": "bottom",
+                                  "reason": conflict["reason"]})
+    working = {**state, "merged_pins": pin_dicts}
+    if automatic:
+        working["human_history"] = _history(state, "conflicts", {
+            "action": "auto", "source": "layout_rule", "resolutions": automatic})
     unresolved = [item for item in conflicts if item.get("resolved") is None]
     if not unresolved:
+        if automatic:
+            return {"status": "conflicts_clear", "conflicts": conflicts, "merged_pins": pin_dicts,
+                    "human_history": working["human_history"]}
         return {"status": "conflicts_clear"}
 
     items = [
@@ -332,25 +363,51 @@ async def resolve_conflicts_node(state: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "conflicts": conflicts,
-        "merged_pins": _apply_pin_resolutions(state, chosen),
+        "merged_pins": _apply_pin_resolutions(working, chosen),
         "human_conflicts": answer,
-        "human_history": _history(state, "conflicts", answer),
+        "human_history": _history(working, "conflicts", answer),
         "status": "conflicts_resolved",
     }
 
 
 async def resolve_review_diffs_node(state: dict[str, Any]) -> dict[str, Any]:
-    """逐条裁决"提取 vs 复核"的差异。
-
-    源程序在这里有一条特别的判断：若两侧是 O/0 这类**易混字形**，默认值改成
-    "复核值"而不是"提取值"（``ocr_confusable``）。把默认值一并交给操作员，
-    但**绝不自动改**。
-    """
+    """规则能验证的差异自动通过，只询问剩余实质差异。"""
     from backend.agents.symbol.tools.review import ocr_confusable
+    from backend.agents.symbol.contracts.review_policy import automatic_name_resolution
 
     review = deepcopy(state.get("review") or {})
+    pins = deepcopy(state.get("merged_pins") or [])
+    by_number = {str(p.get("pin_number")): p for p in pins}
+    observations = {str(p.get("pin_number")): p for p in review.get("observations") or []}
+    automatic = []
+    if len(by_number) == len(pins):
+        for item in review.get("mismatches") or []:
+            if item.get("resolved") is not None or item.get("field") != "name" or item.get("needs_confirmation"):
+                continue
+            number = str(item.get("pin_number") or "")
+            pin = by_number.get(number)
+            if pin is None:
+                continue
+            decision = automatic_name_resolution(pin, str(item.get("expected") or ""),
+                str(item.get("observed") or ""), observation=observations.get(number))
+            if decision:
+                value, reason = decision
+                pin["name"] = value
+                item.update(resolved=value, resolution_source="automatic_rule", reason=reason)
+                automatic.append({"pin_number": number, "field": "name", "value": value,
+                                  "expected": item.get("expected"), "observed": item.get("observed"),
+                                  "reason": reason})
+    working = {**state, "merged_pins": pins}
+    if automatic:
+        review["auto_resolutions"] = [*review.get("auto_resolutions", []), *automatic]
+        working["human_history"] = _history(state, "review_diffs", {
+            "action": "auto", "source": "automatic_rule", "resolutions": automatic})
     mismatches = [item for item in review.get("mismatches") or [] if item.get("resolved") is None]
     if not mismatches:
+        if automatic:
+            return {"status": "review_clear", "review": review, "merged_pins": pins,
+                    "human_history": working["human_history"],
+                    "human_review_diffs": {"action": "auto", "resolutions": automatic}}
         return {"status": "review_clear"}
 
     items = []
@@ -392,9 +449,9 @@ async def resolve_review_diffs_node(state: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "review": review,
-        "merged_pins": _apply_pin_resolutions(state, chosen),
+        "merged_pins": _apply_pin_resolutions(working, chosen),
         "human_review_diffs": answer,
-        "human_history": _history(state, "review_diffs", answer),
+        "human_history": _history(working, "review_diffs", answer),
         "status": "review_diffs_resolved",
     }
 
@@ -446,7 +503,12 @@ async def ask_check_questions_node(state: dict[str, Any]) -> dict[str, Any]:
 
 
 async def confirm_output_node(state: dict[str, Any]) -> dict[str, Any]:
-    """写入正式库之前的最后一道闸（源程序默认 N）。"""
+    """An image generation request authorizes output once its checks pass."""
+    if state.get("input_kind") == "image" and state.get("auto_generate", True):
+        answer = {"action": "auto", "source": "image_generation_request",
+                  "comment": "使用者请求按上传图片直接生成符号"}
+        return {"human_output": answer, "human_history": _history(state, "output", answer),
+                "status": "output_confirmed"}
     layout = state.get("layout") or {}
     answer = _ask(
         {

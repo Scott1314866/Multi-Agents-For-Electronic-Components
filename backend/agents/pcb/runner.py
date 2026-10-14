@@ -5,20 +5,19 @@ SKILL 不能独立运行 —— 必须由 ``allegro.exe`` 以 ``-s <script>.scr`
 
 1. **cwd 决定加载哪个 `.il`** —— Allegro 只读启动目录下的 ``allegro.ilinit``，
    所以每次跑必须固定 cwd 并把 ilinit 指向本次要用的脚本；
-2. **无头模式必须 ``-sq``**，且 SKILL 侧要 ``?noConfirm t``，否则卡在保存确认框
+2. **无图形模式使用 ``-nographic``**，且 SKILL 侧要 ``?noConfirm t``，否则卡在保存确认框
    （GUI 会话日志 ``allegro.jrl`` 里留下了那条 ``Do you want to save…`` 的反面证据）；
 3. **必须 ``skill (axlOSExit 0)``** 收尾，否则进程挂着不退出。
 
-本机没有 Cadence（``C:\\Cadence`` 不存在、无 ``CDS*`` 环境变量），所以可执行
-文件是**参数**：有环境的机器传入即可，没有则明确抛 ``FileNotFoundError``，
-而不是让子进程去静默失败。
+可执行文件由参数、服务端配置或环境变量指定。没有本机工具链时明确抛
+``FileNotFoundError``；本机／远程设备的选择由 execution 模块处理。
 """
 
 from __future__ import annotations
 
 import os
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from backend.agents.pcb.skill_emitter import emit_allegro_ilinit
@@ -51,6 +50,7 @@ class AllegroRun:
     stdout: str
     log_path: Path
     log_text: str
+    execution: dict = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -148,13 +148,18 @@ def run_stage(
     design_name = design or f"{spec_name}.dra"
     command = [
         str(exe_path),
-        "-sq",
+        "-symbol",
+        "package",
+        "-nographic",
+        "-noopengl",
         "-product",
         product,
         "-s",
         script_name,
         design_name,
     ]
+    # -sq filters SI licences; it is not the non-graphic switch. The symbol
+    # editor mode is required for both new PACKAGE databases and reopened .dra.
 
     completed = subprocess.run(
         command,
@@ -162,6 +167,7 @@ def run_stage(
         capture_output=True,
         timeout=timeout,
         check=False,
+        **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
     )
     stdout = completed.stdout.decode("utf-8", errors="replace")
     stderr = completed.stderr.decode("utf-8", errors="replace")
@@ -197,7 +203,10 @@ def build_command(
     _, script_name, _ = STAGES[stage]
     return [
         str(exe),
-        "-sq",
+        "-symbol",
+        "package",
+        "-nographic",
+        "-noopengl",
         "-product",
         product,
         "-s",

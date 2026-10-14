@@ -190,7 +190,8 @@
     .workspace-content .chat-message.system { justify-self:start;text-align:left;background:none;color:#91919a;font-size:12px; }.chat-speaker { display:none; }
     .chat-attachment { display:block;width:fit-content;margin-top:10px;border:1px solid #dedee3;background:#fff;border-radius:8px;padding:6px 10px;color:#73737e;font-size:12px;white-space:normal; }
     .chat-tail { min-width:0; }.workspace-content .chat-state { margin:0;padding:6px 0;background:none;color:#878790;font-size:12px;display:flex;align-items:center;gap:9px; }
-    .chat-state::before { content:"";width:6px;height:6px;border-radius:50%;background:#92929b;animation:thinking 1.4s ease-in-out infinite; }
+    .chat-state[data-working="true"]::before { content:"";width:14px;height:14px;flex-shrink:0;border:2px solid #dce4fb;border-top-color:#4b7ef7;border-radius:50%;animation:working-spin .85s linear infinite; }
+    @keyframes working-spin { to { transform:rotate(360deg); } }
     .execution-logs { margin:0 0 18px;color:#777780;font-size:12px; }
     .execution-logs summary { width:fit-content;cursor:pointer;list-style:none;display:flex;align-items:center;gap:7px;padding:4px 0;color:#686872; }
     .execution-logs summary::before { content:'›';display:inline-block;transition:transform .16s; }.execution-logs[open] summary::before { transform:rotate(90deg); }
@@ -239,7 +240,7 @@
     <main class="login-main"><section class="login-panel"><div class="eyebrow">PRIVATE WORKSPACE</div><h2>进入工作区</h2><p>登录后查看历史任务，或开始生成新的元器件模型。</p><form id="login-form"><label for="username">账号</label><input id="username" type="text" autocomplete="username" required placeholder="输入账号"><label for="password">密码</label><input id="password" type="password" autocomplete="current-password" required placeholder="输入密码"><button class="primary" id="login-button" type="submit"><span>登录工作区</span><span class="arrow">↗</span></button></form><div id="login-feedback" role="alert"></div></section></main>
   </section>
   <section class="workspace-sheet" id="workspace-sheet" hidden>
-    <aside class="session-sidebar"><div class="sidebar-top"><div class="brand"><span class="mark">C</span> Component Foundry</div><button id="new-session" class="new-session" type="button">＋ 新建对话</button><div class="session-heading">任务会话 <span>SESSIONS</span></div></div><nav class="recent" id="recent-jobs" aria-label="历史任务会话"></nav><div class="sidebar-bottom"><span id="auth-state">已连接到你的工作区</span><button id="logout-button" type="button">退出登录</button></div></aside>
+    <aside class="session-sidebar"><div class="sidebar-top"><div class="brand"><span class="mark">C</span> Component Foundry</div><a href="/api/v1/workbench/ui" style="display:block;margin:18px 8px 0;font-size:12px;color:#666670">统一工作台 ↗</a><a href="/api/v1/symbol/ui" style="display:block;margin:18px 8px 0;font-size:12px;color:#666670">Symbol 符号工作台 ↗</a><button id="new-session" class="new-session" type="button">＋ 新建对话</button><div class="session-heading">任务会话 <span>SESSIONS</span></div></div><nav class="recent" id="recent-jobs" aria-label="历史任务会话"></nav><div class="sidebar-bottom"><span id="auth-state">已连接到你的工作区</span><button id="logout-button" type="button">退出登录</button></div></aside>
     <main class="workspace-main"><header class="workspace-header"><div><span class="eyebrow">STEP GENERATION / IMAGE MODE</span><h2 id="active-session-title">新建对话</h2></div><span class="secure"><i></i> 工作区连接</span></header><div class="workspace-content"><div id="status" role="status" aria-live="polite"></div><form id="generate-form" class="composer" aria-label="提交元器件工程图"><div class="composer-attachment" id="file-meta" hidden></div><div class="composer-row" id="dropzone"><button id="attach-button" class="attach-button" type="button" aria-label="添加工程图" title="添加工程图">＋</button><input id="drawing-file" type="file" accept="image/png,image/jpeg,image/bmp,image/tiff,image/webp" hidden><textarea id="message" maxlength="2000" required aria-label="任务描述" placeholder="描述你想生成的 STEP 模型，点击＋添加工程图…"></textarea><button class="send-button" id="submit-button" type="submit" aria-label="发送消息" title="发送消息" data-state="ready"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="send-arrow" d="M12 19V5m-6 6 6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect class="send-square" x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/></svg></button></div><div class="composer-hint">支持 PNG、JPG、BMP、TIFF、WEBP · 最大 25 MB</div></form></div></main>
   </section>
   <script>
@@ -255,6 +256,7 @@
       else{clearTimeout(polling);pollGeneration++;activeSessionId=null;statusEl.replaceChildren();flashEl.hidden=true;$('#password').value='';}
     }
     authView();
+    const registrationLink=document.createElement('a');registrationLink.href='/api/v1/auth/ui';registrationLink.textContent='没有账号？使用邀请码注册';registrationLink.style.cssText='display:block;margin-top:20px;font-size:12px;color:#666670';document.querySelector('.login-panel').append(registrationLink);
     file.addEventListener('change', () => { const meta=$('#file-meta');meta.textContent=file.files[0]?`已添加图纸：${file.files[0].name}`:'';meta.hidden=!file.files[0]; });
     $('#attach-button').addEventListener('click',()=>file.click());
     $('#message').addEventListener('input',()=>resizeComposer());
@@ -357,11 +359,11 @@
         'connector/cn/dsub_connector':'连接器 · 梯形接口连接器',
         'connector/cn/pin_header':'连接器 · 排针',
         'connector/mt':'连接器 · 结构物料',
-        'ic/gullwing_ic':'集成芯片 · 双侧鸥翼引脚封装',
+        'ic/gullwing_ic':'集成芯片 · 两侧鸥翼（含奇数引脚）',
         'ic/quad_gullwing_ic':'集成芯片 · 四侧鸥翼引脚封装',
         'ic/qfn_ufqfpn':'集成芯片 · 四侧无引脚封装',
         'misc':'功率器',
-        'gullwing_ic':'集成芯片 · 双侧鸥翼引脚封装',
+        'gullwing_ic':'集成芯片 · 两侧鸥翼（含奇数引脚）',
         'quad_gullwing_ic':'集成芯片 · 四侧鸥翼引脚封装',
         'dsub_connector':'连接器 · 梯形接口连接器', 'pin_header':'连接器 · 排针',
         'ufqfpn':'集成芯片 · 四侧无引脚封装', 'ic/ufqfpn':'集成芯片 · 四侧无引脚封装'
@@ -481,7 +483,8 @@
       const revision=JSON.stringify([job.status,job.pending_input?.interrupt_id,job.pending_input?.validation_error,job.pending_input?.previous_answer,!!composer,stateText,job.error_msg,job.preview_urls]);
       if(tail.dataset.revision!==revision){
         const state=tail.querySelector('.chat-state'),area=tail.querySelector('.chat-compose');
-        state.textContent=publicMessage(stateText);state.hidden=!!composer||!stateText;
+        const working=!composer&&!job.pending_input&&(['pending','ai_processing'].includes(job.status)||!job.status);
+        state.dataset.working=String(working);state.setAttribute('role','status');state.textContent=(working?'工作中 · ':'')+publicMessage(stateText);state.hidden=!!composer||!stateText;
         area.replaceChildren();if(composer)area.append(composer);tail.dataset.revision=revision;changed=true;
       }
       if(changed){if(!following)messages.scrollTop=oldScroll;else requestAnimationFrame(()=>{if(statusEl.firstElementChild===thread)messages.scrollTo({top:messages.scrollHeight,behavior:fresh?'instant':scrollBehavior()});});}
@@ -607,6 +610,16 @@
       }catch(err){show(err.message,true);}finally{button.disabled=false;}
     }
     const dimensionCopy = {
+      negative_side_terminal_length: {title:'下侧引脚脚底长度',help:'按该侧脚长标注填写；单独设置脚长时，上下侧一起填。'},
+      positive_side_terminal_length: {title:'上侧引脚脚底长度',help:'不能套用下侧脚长；单独设置脚长时，上下侧一起填。'},
+      negative_side_terminal_thickness: {title:'下侧引脚金属厚度',help:'不是本体离板高度；单独设置厚度时，上下侧一起填。'},
+      positive_side_terminal_thickness: {title:'上侧引脚金属厚度',help:'宽端子可能有独立厚度；单独设置厚度时，上下侧一起填。'},
+      negative_side_pin_count: {title:'下侧这一排的引脚数量',help:'按建模顶视图核对下方这一排的实际数量。',unit:'个'},
+      positive_side_pin_count: {title:'上侧这一排的引脚数量',help:'按相同顶视方向核对另一排；两排数量之和必须等于引脚总数。',unit:'个'},
+      negative_side_pin_span: {title:'下侧首末引脚的中心距离',help:'量该排第一只与最后一只引脚中心距，不是相邻间距；单脚排填 0。'},
+      positive_side_pin_span: {title:'上侧首末引脚的中心距离',help:'两脚排可能跨两个基本间距，不要自动填成一个间距；单脚排填 0。'},
+      negative_side_terminal_width: {title:'下侧单只引脚的宽度',help:'按该侧引脚宽度标注与毫米列填写；不能把总体高度 A 当成宽度。'},
+      positive_side_terminal_width: {title:'上侧单只引脚的独立宽度',help:'宽端子引用独立宽度标注，例如 D1；不要套用另一侧普通引脚 b。'},
       body_standoff: {title:'本体离桌面 / 电路板的高度',help:'看封装本体底面与引脚落地面之间的垂直距离。不要把引脚金属厚度填在这里。'},
       housing_height: {title:'塑封本体自身高度',help:'只量黑色/塑料本体，从本体底面到本体顶面；不包含引脚离板高度。'},
       nominal_pin_count: {title:'所有引脚的总数',help:'把器件四周或两侧的金属引脚全部数一遍，填写整数，例如 16。',unit:'个'},
@@ -641,20 +654,27 @@
         for(const detail of q.conflict_details||[]){const note=document.createElement('p');note.className='dimension-help';note.textContent=String(detail).replace(/\b[a-z]+(?:_[a-z]+)+\b/g,name=>dimensionNames[name]||name);box.append(note);}
         const list=document.createElement('div');list.className='dimension-list';
         const values={}; const previous=(q.previous_answer||{}).values||{};
-        for (const [field,spec] of Object.entries(q.fields||{})) {
+        const entries=Object.entries(q.fields||{}),grouped=q.side_groups||entries.some(([field])=>/^(positive|negative)_side_/.test(field));
+        if(grouped){const orientation=document.createElement('p');orientation.className='dimension-help';orientation.textContent=q.side_orientation||'按建模顶视图核对上侧和下侧，两侧数量和尺寸分别填写。';list.append(orientation);}
+        for(const [group,title]of (grouped?[['upper','上侧引脚'],['lower','下侧引脚'],['body','本体与默认尺寸']]:[['all','']])){
+          const items=entries.filter(([field,spec])=>group==='all'||(spec.group||(field.startsWith('positive_side_')?'upper':field.startsWith('negative_side_')?'lower':'body'))===group);
+          if(!items.length)continue;
+          if(grouped){const heading=document.createElement('h3');heading.textContent=title;list.append(heading);}
+          for (const [field,spec] of items) {
           const meta=dimensionCopy[field]||{title:spec.label_zh||spec.title||spec.description||'尺寸参数',help:'请按图纸标注填写数值。'};
           const card=document.createElement('section');card.className='dimension-field';
           const heading=document.createElement('div');heading.className='dimension-title';
           const title=document.createElement('span');title.textContent=meta.title;heading.append(title);
           const unit=document.createElement('span');unit.className='dimension-unit';unit.textContent=meta.unit||(spec.unit==='count'?'个':'mm');heading.append(unit);card.append(heading);
           const help=document.createElement('p');help.className='dimension-help';help.textContent=spec.conflict_explanation||meta.help;card.append(help);
+          if(spec.source_review_warning){const warning=document.createElement('p');warning.className='dimension-help';warning.textContent=spec.source_review_warning;card.append(warning);}
           const candidates=spec.observed_candidates||[];
           if(candidates.length){
             const candidateList=document.createElement('div');candidateList.className='candidate-list';
             for(const candidate of candidates){
               const row=document.createElement('div');row.className='candidate';
-              const note=document.createElement('span');note.textContent=`系统读到 ${candidate.value}${candidate.unit==='count'?' 个':` ${candidate.unit||'mm'}`}（${candidateSourceLabel(candidate.evidence_kind)}，请核对）`;
-              const use=document.createElement('button');use.type='button';use.textContent='填入';
+              const note=document.createElement('span');note.textContent=spec.source_review_required?`识别候选 ${candidate.value}（符号和单位未确认，请核对原图）`:`系统读到 ${candidate.value}${candidate.unit==='count'?' 个':` ${candidate.unit||'mm'}`}（${candidateSourceLabel(candidate.evidence_kind)}，请核对）`;
+              const use=document.createElement('button');use.type='button';use.textContent='填入';use.disabled=Boolean(spec.source_review_required);
               use.addEventListener('click',()=>{input.value=candidate.value;input.dispatchEvent(new Event('input',{bubbles:true}));});
               row.append(note,use);candidateList.append(row);
             }
@@ -672,6 +692,7 @@
           list.append(card);
         }
         box.append(list);
+        }
         const actions=document.createElement('div');actions.className='dimension-actions';
         makeAnswer=()=>{
           const values={};for(const input of box.querySelectorAll('[data-field]')) if(input.value.trim()!=='') values[input.dataset.field]={value:Number(input.value),unit:(q.fields[input.dataset.field]||{}).unit||'mm'};

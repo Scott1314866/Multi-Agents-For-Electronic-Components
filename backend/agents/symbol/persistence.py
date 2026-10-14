@@ -97,14 +97,39 @@ def serialize_symbol_snapshot(snapshot: Any) -> dict[str, Any]:
         "checkpoint_id": configurable.get("checkpoint_id"),
         "next_nodes": list(getattr(snapshot, "next", ()) or ()),
         "interrupts": interrupts,
+        "created_at": getattr(snapshot, "created_at", None),
+        "parent_checkpoint_id": ((getattr(snapshot, "parent_config", None) or {})
+                                 .get("configurable", {}).get("checkpoint_id")),
+        "metadata": dict(getattr(snapshot, "metadata", None) or {}),
     }
 
 
-async def get_postgres_symbol_snapshot(symbol_drawing_id: str | UUID) -> dict[str, Any]:
+async def get_postgres_symbol_snapshot(
+    symbol_drawing_id: str | UUID, checkpoint_id: str | UUID | None = None,
+) -> dict[str, Any]:
     """按任务的 thread 读取状态与待答问题。"""
     config = symbol_checkpoint_config(symbol_drawing_id)
+    if checkpoint_id is not None:
+        config["configurable"]["checkpoint_id"] = str(UUID(str(checkpoint_id)))
     async with open_postgres_symbol_graph(setup=False) as graph:
-        return serialize_symbol_snapshot(await graph.aget_state(config))
+        snapshot = await graph.aget_state(config)
+        if checkpoint_id is not None and not getattr(snapshot, "created_at", None):
+            raise LookupError("checkpoint does not belong to this task")
+        return serialize_symbol_snapshot(snapshot)
+
+
+async def list_postgres_symbol_snapshots(
+    symbol_drawing_id: str | UUID, *, limit: int = 20, before: str | UUID | None = None,
+) -> list[dict[str, Any]]:
+    """Newest first; every history query is scoped to a single task thread."""
+    config = symbol_checkpoint_config(symbol_drawing_id)
+    cursor = None
+    if before is not None:
+        cursor = symbol_checkpoint_config(symbol_drawing_id)
+        cursor["configurable"]["checkpoint_id"] = str(UUID(str(before)))
+    async with open_postgres_symbol_graph(setup=False) as graph:
+        return [serialize_symbol_snapshot(snapshot) async for snapshot in graph.aget_state_history(
+            config, limit=limit, before=cursor)]
 
 
 @asynccontextmanager

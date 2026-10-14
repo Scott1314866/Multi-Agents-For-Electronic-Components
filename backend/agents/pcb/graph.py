@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from backend.agents.pcb.human_nodes import confirm_spec_node, review_result_node
+from backend.agents.pcb.human_nodes import confirm_spec_node, review_result_node, confirm_image_parameters_node,route_image_confirmation
+from backend.agents.pcb.image_input import prepare_input_node, extract_image_node, route_input
 from backend.agents.pcb.nodes import (
     emit_only_done_node,
     emit_skills_node,
@@ -45,7 +46,8 @@ def build_pcb_graph(checkpointer=None):
 
     执行链路：
 
-        load_spec → validate_spec → confirm_spec [interrupt]
+        prepare_input → extract_image → confirm_image_parameters [interrupt]
+        → load_spec → validate_spec → confirm_spec [JSON 输入的 interrupt]
         → emit_skills → run_build → run_verify → run_props
         → judge → review_result [interrupt] → END
 
@@ -60,6 +62,9 @@ def build_pcb_graph(checkpointer=None):
         已编译的图。
     """
     builder = StateGraph(PcbPackageState)
+    builder.add_node("prepare_input", prepare_input_node)
+    builder.add_node("extract_image", extract_image_node)
+    builder.add_node("confirm_image_parameters", confirm_image_parameters_node)
 
     # ── 注册节点 ─────────────────────────────────────────────────
     builder.add_node("load_spec", load_spec_node)
@@ -78,7 +83,13 @@ def build_pcb_graph(checkpointer=None):
     builder.add_node("failed", failed_node)
 
     # ── 边 ───────────────────────────────────────────────────────
-    builder.add_edge(START, "load_spec")
+    builder.add_edge(START, "prepare_input")
+    builder.add_conditional_edges("prepare_input", route_input,
+                                  {"spec": "load_spec", "image": "extract_image", "failed": "failed"})
+    builder.add_conditional_edges("extract_image", route_after_load,
+                                  {"continue": "confirm_image_parameters", "failed": "failed"})
+    builder.add_conditional_edges("confirm_image_parameters", route_image_confirmation,
+                                  {"continue": "load_spec", "clarify":"confirm_image_parameters", "cancelled": END})
     builder.add_conditional_edges(
         "load_spec",
         route_after_load,

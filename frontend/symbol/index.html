@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Symbol 符号工作台 · Component Foundry</title>
+  <link rel="stylesheet" href="/api/v1/symbol/ui/assets/styles.css">
+  <script type="module" src="/api/v1/symbol/ui/assets/app.js"></script>
+</head>
+<body>
+  <section id="login-view" class="login-view">
+    <div class="login-intro">
+      <a class="brand" href="/api/v1/step/ui"><span class="brand-mark">C</span> Component Foundry</a>
+      <div><p class="eyebrow">SYMBOL WORKSPACE</p><h1>从手册或图片，<br>生成符号库。</h1><p>上传 PDF 手册或封装引脚图，生成可在 Cadence 中使用的 OLB 符号库。</p></div>
+      <div class="login-flow"><span>01 上传文件</span><span>02 读取引脚</span><span>03 生成符号</span></div>
+    </div>
+    <div class="login-main"><form id="login-form" class="login-card">
+      <p class="eyebrow">COMPONENT FOUNDRY / SYMBOL</p><h2>登录工作区</h2><p class="muted">使用现有账号，继续你的符号任务。</p>
+      <label>用户名或邮箱<input id="username" name="username" autocomplete="username" required maxlength="200"></label>
+      <label>密码<input id="password" name="password" type="password" autocomplete="current-password" required></label>
+      <p id="login-error" role="alert" class="form-error" hidden></p>
+      <button id="login-button" class="primary" type="submit">登录工作区 <span aria-hidden="true">→</span></button>
+      <a class="subtle-link" href="/api/v1/step/ui">前往 STEP 数模工作台 ↗</a>
+      <a class="subtle-link" href="/api/v1/auth/ui">没有账号？使用邀请码注册</a>
+    </form></div>
+  </section>
+
+  <div id="workspace" class="workspace" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="/api/v1/symbol/ui"><span class="brand-mark">C</span> Component Foundry</a>
+      <nav class="product-nav" aria-label="功能切换"><a href="/api/v1/workbench/ui">统一工作台</a><a href="/api/v1/step/ui">STEP</a><a href="/api/v1/symbol/ui" aria-current="page">Symbol</a><a href="/api/v1/pcb/ui">PCB</a></nav>
+      <button id="new-job" class="new-job" type="button"><span aria-hidden="true">＋</span> 新建符号</button>
+      <div class="history-heading"><span id="history-title">历史任务</span><div><button id="deleted-history" type="button" aria-pressed="false">已删除</button><button id="refresh-history" type="button" aria-label="刷新历史任务">↻</button></div></div>
+      <nav id="history" class="history" aria-label="符号任务"></nav>
+      <button id="load-more" class="load-more" type="button" hidden>加载更多</button>
+      <footer class="sidebar-footer"><span>你的符号工作区</span><button id="logout" type="button">退出登录</button></footer>
+    </aside>
+    <main>
+      <header class="workspace-header"><div><span class="eyebrow">COMPONENT / SYMBOL</span><h2>符号工作台</h2></div><span class="header-note"><i></i> Cadence 符号库</span></header>
+      <div id="flash" class="flash" role="status" aria-live="polite" hidden></div>
+      <div class="content">
+        <section id="upload-view" class="upload-view">
+          <div class="intro-heading"><span class="eyebrow">PDF / IMAGE → OLB</span><h1>从手册或图片，生成符号。</h1><p>支持 PDF 手册和完整封装引脚图。清晰的图片会直接生成；PDF 会解析手册并核对引脚。</p></div>
+          <form id="upload-form" class="upload-card">
+            <label id="dropzone" class="dropzone" for="datasheet">
+              <span class="file-icon" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17V5m-4 4 4-4 4 4M4 20h16"/></svg></span><strong id="file-title">选择或拖入 PDF 手册 / 封装图片</strong><span id="file-detail">PDF 最大 64 MB；PNG / JPG / WEBP / BMP 最大 32 MB</span>
+              <input id="datasheet" name="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,application/pdf,image/png,image/jpeg,image/webp,image/bmp" required>
+            </label>
+            <div class="upload-fields"><label>型号 <span class="optional">可选</span><input id="device" name="device" maxlength="200" placeholder="例如 ADS1230"></label><label>封装 <span class="optional">可选</span><input id="package" name="package" maxlength="200" placeholder="例如 TSSOP-16"></label></div>
+            <div id="pdf-options" hidden><label class="source-option"><input id="strict-pages" name="strict_pages" type="checkbox">仅解析引脚与封装章节</label></div>
+            <div class="upload-footer"><span id="upload-hint">PDF 解析手册，图片直接还原引脚布局。</span><button id="generate" class="primary" type="submit">生成符号 <span aria-hidden="true">→</span></button></div>
+          </form>
+          <div class="delivery-strip"><div><b>01</b><span>读取文件<small>PDF 手册 / 封装图片</small></span></div><div><b>02</b><span>还原布局<small>保留位置与对齐</small></span></div><div><b>03</b><span>生成符号<small>下载 OLB 与 DSN</small></span></div></div>
+        </section>
+
+        <section id="job-view" class="job-view" hidden aria-busy="false">
+          <div class="job-heading"><div><p class="eyebrow" id="job-reference">SYMBOL TASK</p><h1 id="job-title">读取任务…</h1><p id="job-meta" class="muted"></p></div><div class="job-tools"><span id="job-status" class="status-pill">加载中</span><button id="refresh-job" class="secondary" type="button">刷新</button><button id="source-download" class="secondary" type="button">下载手册 ↧</button><button id="trace-download" class="secondary" type="button">回溯记录 ↧</button><button id="restore-job" class="secondary" type="button" hidden>恢复任务</button></div></div>
+          <ol class="progress" id="progress" aria-label="生成进度"><li>读取图片</li><li>还原布局</li><li>生成符号</li></ol>
+          <div class="job-grid">
+            <section class="preview-card"><div class="card-heading"><h2>引脚布局</h2><div class="preview-tools"><span id="pin-count" class="small-tag">等待解析</span><button id="zoom-out" type="button" aria-label="缩小引脚布局" disabled>−</button><button id="zoom-fit" type="button" aria-label="适配引脚布局" disabled>适配</button><button id="zoom-in" type="button" aria-label="放大引脚布局" disabled>＋</button></div></div><div id="preview" class="preview"><p class="muted">确认引脚后，这里将显示符号布局。</p></div><p id="layout-summary" class="layout-summary"></p><p class="preview-caption">布局预览用于核对引脚；生成后的 OLB 可在 Cadence 中打开。</p></section>
+            <section class="review-card"><div class="card-heading"><h2>核对与确认</h2><span id="check-score" class="small-tag" hidden></span></div><div id="question-area"></div><div id="findings"></div></section>
+          </div>
+          <section id="artifact-section" class="artifact-section" hidden><div class="section-heading"><h2>任务文件</h2><span id="execution-summary" class="muted"></span></div><div id="artifacts" class="artifacts"></div></section>
+          <section id="pin-section" class="pin-section" hidden><div class="section-heading"><h2>引脚清单</h2><span id="pin-table-count" class="muted"></span></div><div class="table-scroll"><table><thead><tr><th scope="col">引脚号</th><th scope="col">名称</th><th scope="col">类型</th><th scope="col">侧别</th><th scope="col">说明</th></tr></thead><tbody id="pin-table"></tbody></table></div></section>
+          <details id="log-section" class="log-section" hidden><summary>生成日志</summary><pre id="capture-log"></pre></details>
+          <details id="human-history-section" class="human-history-section" hidden><summary>确认记录</summary><ol id="human-history"></ol></details>
+        </section>
+      </div>
+      <footer class="workspace-footer"><span>Component Foundry</span><span>PDF / 图片 → 引脚 → 符号库</span></footer>
+    </main>
+  </div>
+</body>
+</html>

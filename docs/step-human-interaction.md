@@ -16,12 +16,12 @@
 
 ```powershell
 cd D:\WorkSpace\Xien\project_01
-.\.venv\Scripts\python.exe -m backend.main
+.\.venv\Scripts\python.exe -s -m backend.main
 ```
 
-默认后端只挂载 Auth 和 STEP，旧简历审查、面试 API 已移除，不再依赖缺失的 QA 模块。服务监听 `127.0.0.1:8000`，启动时执行数据库迁移和任务恢复扫描。
+默认后端挂载认证、STEP、PCB、Symbol 和工作台 API。服务监听 `0.0.0.0:8000`，本机通过 `127.0.0.1:8000` 访问，启动时执行数据库迁移和三个 Agent 的任务恢复扫描。
 
-`backend.main`、`backend.step_main`、`backend.new_main` 复用同一个应用和 `run_server()`；后两者保留为兼容入口。Windows 启动使用显式 Selector Runner 执行 Uvicorn `serve()`，保证 PostgreSQL saver 兼容。使用上述模块命令即可。
+`backend.main` 是唯一后端入口，应用、生命周期和 `run_server()` 均在 `backend/main.py` 中定义。Windows 启动使用显式 Selector Runner 执行 Uvicorn `serve()`，保证 PostgreSQL saver 兼容。
 
 另开 PowerShell，使用 API 账号登录（不是 PostgreSQL 账号）。不设置 `STEP_PASSWORD` 时会隐藏输入密码：
 
@@ -158,7 +158,7 @@ LangGraph 的完整 state 与待答 interrupt 保存在 PostgreSQL checkpoint �
 
 已持久化的暂停任务在后端重启后可继续：重新 GET 同一 `drawing_id`，取得当前问题，再提交人工回答。后端用同一 `thread_id` 和 `Command(resume={interrupt_id: answer})` 恢复。不要重新上传图片来代替恢复。
 
-后端启动时会扫描 `ai_processing` 任务，以及 `package_params.projection_sync_failed=true` 的记录。三个兼容入口使用相同恢复逻辑。后台执行与恢复都持有同一任务的 PostgreSQL advisory lock；恢复扫描会跳过仍有其他进程执行的任务。取得锁后再次读取数据库状态，再按 checkpoint 决定下一步：
+后端启动时会扫描 `ai_processing` 任务，以及 `package_params.projection_sync_failed=true` 的记录。统一入口依次恢复 STEP、PCB 和 Symbol 任务。后台执行与恢复都持有同一任务的 PostgreSQL advisory lock；恢复扫描会跳过仍有其他进程执行的任务。取得锁后再次读取数据库状态，再按 checkpoint 决定下一步：
 
 | checkpoint 情况 | 恢复行为 |
 | --- | --- |
@@ -174,3 +174,24 @@ LangGraph 的完整 state 与待答 interrupt 保存在 PostgreSQL checkpoint �
 图执行失败会记为 `failed`。图已有有效 checkpoint，但更新 `step_drawings` 摘要或读取执行结果暂时失败时，会保留 `ai_processing`，设置 `package_params.projection_sync_failed=true`，并在 `error_msg` 与 `projection_sync_error` 中记录原因，供下一次启动恢复。任务被取消时会在释放执行锁前记录 `worker_interrupted=true`；如果进程被强制结束，原有 `ai_processing` 记录同样会被下次启动扫描。
 
 后台仍由 `asyncio.create_task` 执行，恢复调度在服务启动时触发，目前没有定时重试队列。节点中途退出后可能重新执行尚未提交 checkpoint 的该节点；已持久化的人工问题和终态不会被当作新任务重新开始。若暂时的数据库故障留下恢复标记，数据库恢复后重新运行 `.\.venv\Scripts\python.exe -m backend.main`，再查询同一 `drawing_id`。
+
+2026-10-12：`ic/gullwing_ic` 同时支持对称偶数和明确布局的奇数引脚。
+奇数总数不再改成偶数；必须提供 `negative_side_pin_count`、`positive_side_pin_count`
+及各排的 `negative_side_pin_span`、`positive_side_pin_span`。X 沿同排排列，Y 沿跨排方向，
+两排按各自跨度居中等距排列；5 脚的 3/2 排可具有相同首末中心跨度，少脚排不自动缩为一个间距。
+两排数量必须与总数一致，跨度和基本间距检查仍执行。单脚排的跨度允许为 0。
+缺少布局时追问数量和跨度，不猜测分配。可选字段发生冲突或低置信度时也提供核对入口，
+避免只有可选引脚倾角待核对却落入不可恢复的停止状态。
+奇数布局中，脚长、宽度和厚度若仅来自 `family_constraint` 几何启发式绑定，
+需核对 b/c/L 的角色后使用，防止数值行错位。CAD 核心可独立导入，STEP 公共图与
+检查点接口按需加载；直接导入 Family 时的 drawing 注册循环依赖也已消除。
+
+
+两侧鸥翼封装现在支持每侧独立数量、首末中心跨度和单只引脚宽度。SOT 不能仅凭偶数总数推断等数量、等宽两排；必须核对两侧排布和宽度。Y 负侧 / 正侧在顶视图中分别对应下侧 / 上侧，X 沿同排引脚排列方向。单脚排中心跨度为 0；3脚排首末跨度包含两个相邻间距。宽端子的独立宽度与普通引脚宽度分别填写，不能把本体高度当宽度。
+
+参数规划逐侧检查跨度加宽度是否落在本体沿排方向的长度内，同排宽度不能达到或超过相邻间距。STEP 回读后另行核对每侧数量、中心位置和宽度；即使总实体数和外包络相同，也不能掩盖错误的 2+2 或等宽布局。数值表格的启发式 L/c/b 绑定在 SOT 和独立两侧布局中仍要求人工核对符号与毫米列。
+
+
+SOT223 参数追问复查（2026-10-13）：当一侧首末中心跨度加引脚宽度超出本体长度，追问必须开放该侧跨度、宽度和本体长度三个操作槽位，兼容只含宽度名称的旧检查点。关系冲突不能隐藏同时被拒绝的尺寸来源候选。候选若尚未确认符号或单位，页面应明确标注，并避免把原始数值显示成已确定的毫米尺寸。更正任一参与参数后必须重新计算关系；历史填写值与审核记录保留。
+
+两侧鸥翼 IC 输入按建模顶视图分为上侧和下侧。每侧独立记录引脚数量、金属宽度、脚底长度、金属厚度、首末中心距（单脚为0）。不从总数平分两侧。已确认的侧参数回填显示；脚长或厚度单独设置时须核对上下两侧，未分别设置的默认尺寸仅支持明确标记的包络模型。Feature IR保留每侧来源，STEP回读逐侧量测独立脚底长度和厚度。中文输入支持上侧/下侧字段名。

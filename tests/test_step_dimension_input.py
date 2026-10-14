@@ -187,7 +187,7 @@ def test_conflict_routes_to_human_before_visual_review(monkeypatch):
     assert route_after_dimension_gate(state) == "human"
 
 
-def test_failed_geometry_retry_reuses_thread_and_asks_only_related_dimensions():
+def test_failed_geometry_retry_reuses_thread_and_groups_rows_with_related_dimensions():
     snapshot = {
         "values": {
             "status": "failed",
@@ -222,7 +222,7 @@ def test_failed_geometry_retry_reuses_thread_and_asks_only_related_dimensions():
         resumed = serialize_step_snapshot(await graph.aget_state(config))
         assert resumed["next_nodes"] == ["ask_missing_dimensions"]
         assert resumed["interrupts"][0]["value"]["stage"] == "dimensions"
-        assert set(resumed["interrupts"][0]["value"]["fields"]) == {
+        assert set(resumed["interrupts"][0]["value"]["fields"]) >= {
             "body_length", "pin_span", "terminal_width",
         }
         assert len(resumed["values"]["human_history"]) == 1

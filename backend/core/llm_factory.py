@@ -32,6 +32,7 @@ _HTTP_SYNC_CLIENT = httpx.Client(  # 同步客户端（给 invoke 用）
 _AGENT_MODEL_ROUTING: dict[str, str] = {
     "qa":               "deepseek-llm",  # 智能问答
     "pcb":              "deepseek-llm",  # PCB封装图生成
+    "pcb_vision":       "qwen-version",  # PCB 封装尺寸图参数提取
     "step":             "deepseek-llm",  # STEP数模图生成
     "drawing_extract":  "qwen-version",  # 二维工程图视觉理解 / Golden Set
     "symbol":           "deepseek-llm",

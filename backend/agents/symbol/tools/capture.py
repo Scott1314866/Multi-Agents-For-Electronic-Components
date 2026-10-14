@@ -21,12 +21,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import subprocess
 import re
+import tempfile
+import os
 
-from backend.agents.symbol.config import DBO_DLL, resolve_tclsh
+from backend.agents.symbol.config import DBO_DLL, resolve_tclsh, resolve_dbo_dll
 from backend.agents.symbol.contracts.layout import SymbolLayout
 
 #: 引脚类型码：4 = Passive（五份生成物跨越 IN/OUT/IO/PAS 四类，一律是 4）。
@@ -34,6 +36,15 @@ PIN_TYPE_PASSIVE = 4
 
 #: 成功判据：stdout 里出现这一行。
 PASS_MARKER = "===== CAPTURE RESULT: PASS ====="
+OLE_HEADER = bytes.fromhex("D0CF11E0A1B11AE1")
+
+
+def is_native_document(path: Path) -> bool:
+    """OLB/DSN use the compound-document format, not plain text placeholders."""
+    if not path.is_file():
+        return False
+    with path.open("rb") as stream:
+        return stream.read(8) == OLE_HEADER
 
 #: tclsh 缺省超时（秒）。
 DEFAULT_TIMEOUT = 300.0
@@ -57,6 +68,8 @@ class CaptureResult:
     dsn: Path
     #: 生成的 ``<part>_gen.tcl``。
     script: Path
+    log_path: Path | None = None
+    execution: dict = field(default_factory=dict)
 
 
 class CaptureToolchainUnavailable(FileNotFoundError):
@@ -82,7 +95,7 @@ def _validate_part_name(part: str) -> None:
         raise ValueError("型号不能用作产物文件名：请去除路径分隔符或非法文件名字符")
 
 
-def render_tcl(layout: SymbolLayout, out_dir: Path) -> str:
+def render_tcl(layout: SymbolLayout, out_dir: Path, *, dbo_dll: str | Path | None = None) -> str:
     """把布局渲染成 TCL 脚本文本（纯函数，可对拍）。"""
     _validate_part_name(layout.part_name)
     part = _tcl_string(layout.part_name)
@@ -97,9 +110,9 @@ def render_tcl(layout: SymbolLayout, out_dir: Path) -> str:
     lines.append("file mkdir $outDir")
     lines.append("")
     lines.append('step "load DBO DLL"')
-    lines.append(
-        f'if {{[catch {{load {DBO_DLL} DboTclWriteBasic}} err]}} {{ die "load: $err" }}'
-    )
+    dll = str(dbo_dll or DBO_DLL).replace("\\", "/")
+    dll_word = dll if re.fullmatch(r"[\w./:-]+", dll) else f'"{_tcl_string(dll)}"'
+    lines.append(f'if {{[catch {{load {dll_word} DboTclWriteBasic}} err]}} {{ die "load: $err" }}')
     lines.append("set mSession [DboTclHelper_sCreateSession]")
     lines.append("")
     lines.append('step "create .olb + symbol"')
@@ -225,6 +238,7 @@ def generate(
     *,
     out_dir: Path,
     tclsh: str | Path | None = None,
+    dbo_dll: str | Path | None = None,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> CaptureResult:
     """渲染 TCL 并执行，产出 ``.OLB`` 与 ``.DSN``。
@@ -233,6 +247,7 @@ def generate(
         layout: 已算好的符号布局。
         out_dir: 输出目录；同时是 TCL 里的 ``$outDir``。
         tclsh: ``tclsh.exe`` 路径；留空则自动探测。
+        dbo_dll: DBO DLL 路径；默认使用运行器同目录的 DLL。
         timeout: 子进程超时（秒）。
 
     Returns:
@@ -240,8 +255,7 @@ def generate(
 
     Raises:
         FileNotFoundError: 找不到 ``tclsh.exe``（环境缺失，不是生成失败）。
-        subprocess.TimeoutExpired: 超时。源程序的 ``web/service.py`` 把这两种
-            异常单独接住并降级成"生成失败"，调用方应保持同样的区分。
+        超时返回失败结果并保留日志；不会登记未完成的二进制文件。
     """
     _validate_part_name(layout.part_name)
     out_dir = Path(out_dir)
@@ -250,25 +264,70 @@ def generate(
     script.write_text(render_tcl(layout, out_dir), encoding="utf-8")
     try:
         exe = resolve_tclsh(tclsh)
+        dll = Path(dbo_dll) if dbo_dll else resolve_dbo_dll(exe)
+        if not dll.is_file():
+            raise FileNotFoundError(f"找不到 Cadence DBO 动态库：{dll}")
     except FileNotFoundError as exc:
         raise CaptureToolchainUnavailable(str(exc), script) from exc
 
-    completed = subprocess.run(
-        [str(exe), str(script)],
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
+    # 每次执行使用独立目录，旧任务文件不能充当本次成功产物。
+    run_dir = Path(tempfile.mkdtemp(prefix="capture-", dir=out_dir))
+    run_script = run_dir / script.name
+    run_script.write_text(render_tcl(layout, run_dir, dbo_dll=dll), encoding="utf-8")
+    script.write_text(render_tcl(layout, out_dir, dbo_dll=dll), encoding="utf-8")
+    try:
+        completed = subprocess.run(
+            [str(exe), str(run_script)], capture_output=True, timeout=timeout,
+            check=False, **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        timed_out = isinstance(exc, subprocess.TimeoutExpired)
+        log = (f"Capture 执行超时（{timeout} 秒）\n{_decode(exc.stdout)}\n{_decode(exc.stderr)}"
+               if timed_out else f"Capture 启动失败：{exc}")
+        log_path = out_dir / "capture.log"
+        log_path.write_text(log, encoding="utf-8")
+        return CaptureResult(log, False, out_dir / f"{layout.part_name}.OLB", out_dir / f"{layout.part_name}.DSN", script, log_path, {"mode": "local", "timed_out": timed_out})
     log = completed.stdout.decode("utf-8", errors="replace")
     stderr = completed.stderr.decode("utf-8", errors="replace")
     if stderr.strip():
         log = f"{log}\n[stderr]\n{stderr}"
 
-    olb = out_dir / f"{layout.part_name}.OLB"
-    dsn = out_dir / f"{layout.part_name}.DSN"
+    olb = run_dir / f"{layout.part_name}.OLB"
+    dsn = run_dir / f"{layout.part_name}.DSN"
     passed = (
         completed.returncode == 0 and PASS_MARKER in log
-        and all(path.is_file() and path.stat().st_size > 0 for path in (olb, dsn))
+        and all(is_native_document(path) for path in (olb, dsn))
     )
 
-    return CaptureResult(log=log, passed=passed, olb=olb, dsn=dsn, script=script)
+    final_olb, final_dsn = out_dir / olb.name, out_dir / dsn.name
+    if passed:
+        for source, target in ((olb, final_olb), (dsn, final_dsn)):
+            os.replace(source, target)
+    else:
+        log += "\nCapture 未生成通过验证的 OLB/DSN。请检查 Cadence 许可和日志。"
+    log_path = out_dir / "capture.log"
+    log_path.write_text(log, encoding="utf-8")
+    execution = {"mode": "local", "exit_code": completed.returncode, "run_dir": str(run_dir)}
+    if "ORDBDLL-1017" in log or "License not found" in log:
+        execution["error"] = "license_unavailable"
+    return CaptureResult(log, passed, final_olb, final_dsn, script, log_path, execution)
+
+
+def _decode(value: bytes | str | None) -> str:
+    return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value or ""
+
+
+def generate_configured(layout: SymbolLayout, *, out_dir: Path, execution_mode: str | None = None) -> CaptureResult:
+    """Agent 统一执行入口；执行配置仅由服务端环境提供。"""
+    from backend.config import get_settings
+
+    settings = get_settings()
+    if execution_mode is not None:
+        if execution_mode not in {"local", "ssh"}:
+            raise ValueError("execution_mode 必须是 local 或 ssh")
+        settings = settings.model_copy(update={"symbol_capture_mode": execution_mode})
+    if settings.symbol_capture_mode == "ssh":
+        from .capture_remote import generate_remote
+
+        return generate_remote(layout, out_dir=out_dir, settings=settings)
+    return generate(layout, out_dir=out_dir, timeout=settings.symbol_capture_timeout)

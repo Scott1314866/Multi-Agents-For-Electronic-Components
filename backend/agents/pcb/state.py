@@ -4,8 +4,7 @@
 写出的那一小块增量，未涉及的键不出现；列表字段靠节点里显式拼接，
 不用 reducer。
 
-唯一必填输入是 ``spec`` —— 一个 :class:`~backend.agents.pcb.spec.PackageSpec`
-的 dict 形式。其余全部由工作流产出。
+输入为 ``image_path``（尺寸图）或兼容原有 ``spec`` 参数。其余由工作流产出。
 """
 
 from __future__ import annotations
@@ -19,8 +18,27 @@ class PcbPackageState(TypedDict, total=False):
     """参数化 PCB 封装生成工作流的状态。"""
 
     task: str
+    drawing_id: str
+    tenant_id: str
     mode: str
-    # 唯一必填输入
+    input_kind: str
+    image_path: str
+    context_image_paths: list[str]
+    message: str
+    image_meta: dict[str, Any]
+    image_reading: dict[str, Any]
+    extraction_issues: list[str]
+    source_extraction_issues: list[str]
+    extraction_report_path: str
+    extraction_retry_id: str
+    human_image_parameters: dict[str, Any]
+    image_source_spec: dict[str,Any]
+    human_clarification_facts: dict[str,Any]
+    human_manufacturing_adjustments: list[dict[str,Any]]
+    source_revision_id: str
+    source_document_paths: list[str]
+    context_source_info: list[dict[str,Any]]
+    # JSON 输入，或由图片提取/人工补充产出的参数
     spec: dict[str, Any]
     # 输出目录；留空则用临时目录（源程序的 OUTPUT_DIR 是用户正式库，绝不自动写）
     output_dir: str
@@ -46,6 +64,8 @@ class PcbPackageState(TypedDict, total=False):
     #: 环境变量 ALLEGRO_EXE。
     allegro_exe: str
     allegro_timeout: float
+    execution_mode: str
+    execution: dict[str, Any]
 
     # ── 三阶段执行结果（只有执行模式下才有）────────────────────
     build_run: dict[str, Any]

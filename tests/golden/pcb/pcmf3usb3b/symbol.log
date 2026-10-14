@@ -1,0 +1,22 @@
+(---------------------------------------------------------------------)
+(                                                                     )
+(    CREATE SYMBOL                                                    )
+(                                                                     )
+(    Drawing          : PCMF3USB3B_C.dra                              )
+(    Software Version : 17.2S067                                      )
+(    Date/Time        : Sat Oct 10 18:22:16 2026                      )
+(                                                                     )
+(---------------------------------------------------------------------)
+
+
+Create Symbol of type: PACKAGE
+    Directory = C:/Users/scott/AppData/Local/pcb-agent/runs/5736b48e8f9d4dd490e338563327ba15
+    Name      = pcmf3usb3b_c.psm
+    User      = scott
+    Machine   = CUI
+
+
+Create symbol started.
+
+
+Create symbol completed.

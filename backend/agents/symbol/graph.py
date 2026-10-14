@@ -1,6 +1,12 @@
 """符号生成 Agent 的 LangGraph 编排。
 
-一条主链，六个人工停点：
+图片主链：
+
+    validate_input → extract_image → ask_device（图片识别到型号时自动继续）
+      → resolve_review_diffs（仅询问看不清的信息）→ self_check
+      → build_layout → confirm_output（图片任务自动继续）→ generate_capture → finalize
+
+PDF 主链（原节点和人工暂停点同时兼容历史 checkpoint）：
 
     validate_input → locate_pages → parse_document → discover_names
       → ask_device ─┐
@@ -12,7 +18,7 @@
       → build_layout → confirm_output ─┤ 人工
       → generate_capture → finalize
 
-终点分四类，**都不冒充成功**：
+停止或失败时保留原因与已有文件：
 
 * ``failed`` —— 技术失败；
 * ``stopped_no_pin_table`` —— 找不到可解析的引脚表，**不产出占位符号**；
@@ -36,6 +42,7 @@ from backend.agents.symbol.human_nodes import (
 from backend.agents.symbol.nodes import (
     build_layout_node,
     discover_names_node,
+    extract_image_node,
     failed_node,
     finalize_node,
     generate_capture_node,
@@ -78,6 +85,7 @@ def build_symbol_graph(checkpointer=None):
 
     # ── 节点 ─────────────────────────────────────────────────────
     builder.add_node("validate_input", validate_input_node)
+    builder.add_node("extract_image", extract_image_node)
     builder.add_node("locate_pages", locate_pages_node)
     builder.add_node("parse_document", parse_document_node)
     builder.add_node("pick_table", pick_table_node)
@@ -106,9 +114,11 @@ def build_symbol_graph(checkpointer=None):
     builder.add_edge(START, "validate_input")
     builder.add_conditional_edges(
         "validate_input",
-        route_continue_or_failed,
-        {"continue": "locate_pages", "failed": "failed"},
+        lambda state: "failed" if state.get("status") == "failed" else "image" if state.get("input_kind") == "image" else "pdf",
+        {"image": "extract_image", "pdf": "locate_pages", "failed": "failed"},
     )
+    builder.add_conditional_edges("extract_image", route_continue_or_failed,
+                                  {"continue": "ask_device", "failed": "failed"})
     builder.add_conditional_edges(
         "locate_pages",
         route_continue_or_failed,
@@ -139,8 +149,8 @@ def build_symbol_graph(checkpointer=None):
     )
     builder.add_conditional_edges(
         "ask_device",
-        route_after_human_input,
-        {"continue": "ask_package", "cancelled": END},
+        lambda state: "cancelled" if state.get("status") == "cancelled" else "image" if state.get("input_kind") == "image" else "pdf",
+        {"image": "resolve_review_diffs", "pdf": "ask_package", "cancelled": END},
     )
     builder.add_conditional_edges(
         "ask_package",
@@ -180,7 +190,7 @@ def build_symbol_graph(checkpointer=None):
     builder.add_conditional_edges(
         "ask_check_questions",
         route_after_check_answer,
-        {"recheck": "self_check", "reextract": "pick_table", "cancelled": END},
+        {"recheck": "self_check", "reextract": "pick_table", "image_reextract": "extract_image", "cancelled": END},
     )
     builder.add_conditional_edges(
         "build_layout",

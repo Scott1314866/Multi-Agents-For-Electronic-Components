@@ -1,0 +1,405 @@
+{
+  "seconds": 7.86,
+  "reading_source": "real_model_with_contour_verification",
+  "reading": {
+    "spec": {
+      "pin_count": 16,
+      "body_x": 3.5,
+      "name": "XDFN16 3.5x1.35, 0.4P",
+      "body_y": 1.35,
+      "body_height_max": 0.5,
+      "family": "XDFN",
+      "drawing_code": "711AW",
+      "pin_layout": "EXPLICIT"
+    },
+    "evidence": {
+      "pin_count": {
+        "text": "封装标题为'XDFN16 3.5x1.35, 0.4P CASE 711AW'；尺寸表D标称3.50 BSC，E标称1.35 BSC，A最大0.50；底视图显示引脚编号从1到16（顶行1-8，底行16-9）；无明确标注暴露焊盘。",
+        "view": "package metadata image",
+        "confidence": 0.95
+      },
+      "body_x": {
+        "text": "封装标题为'XDFN16 3.5x1.35, 0.4P CASE 711AW'；尺寸表D标称3.50 BSC，E标称1.35 BSC，A最大0.50；底视图显示引脚编号从1到16（顶行1-8，底行16-9）；无明确标注暴露焊盘。",
+        "view": "package metadata image",
+        "confidence": 0.95
+      },
+      "name": {
+        "text": "封装标题为'XDFN16 3.5x1.35, 0.4P CASE 711AW'；尺寸表D标称3.50 BSC，E标称1.35 BSC，A最大0.50；底视图显示引脚编号从1到16（顶行1-8，底行16-9）；无明确标注暴露焊盘。",
+        "view": "package metadata image",
+        "confidence": 0.95
+      },
+      "body_y": {
+        "text": "封装标题为'XDFN16 3.5x1.35, 0.4P CASE 711AW'；尺寸表D标称3.50 BSC，E标称1.35 BSC，A最大0.50；底视图显示引脚编号从1到16（顶行1-8，底行16-9）；无明确标注暴露焊盘。",
+        "view": "package metadata image",
+        "confidence": 0.95
+      },
+      "body_height_max": {
+        "text": "封装标题为'XDFN16 3.5x1.35, 0.4P CASE 711AW'；尺寸表D标称3.50 BSC，E标称1.35 BSC，A最大0.50；底视图显示引脚编号从1到16（顶行1-8，底行16-9）；无明确标注暴露焊盘。",
+        "view": "package metadata image",
+        "confidence": 0.95
+      },
+      "family": {
+        "text": "封装标题为'XDFN16 3.5x1.35, 0.4P CASE 711AW'；尺寸表D标称3.50 BSC，E标称1.35 BSC，A最大0.50；底视图显示引脚编号从1到16（顶行1-8，底行16-9）；无明确标注暴露焊盘。",
+        "view": "package metadata image",
+        "confidence": 0.95
+      },
+      "drawing_code": {
+        "text": "封装标题为'XDFN16 3.5x1.35, 0.4P CASE 711AW'；尺寸表D标称3.50 BSC，E标称1.35 BSC，A最大0.50；底视图显示引脚编号从1到16（顶行1-8，底行16-9）；无明确标注暴露焊盘。",
+        "view": "package metadata image",
+        "confidence": 0.95
+      },
+      "pin_layout": {
+        "text": "封装标题为'XDFN16 3.5x1.35, 0.4P CASE 711AW'；尺寸表D标称3.50 BSC，E标称1.35 BSC，A最大0.50；底视图显示引脚编号从1到16（顶行1-8，底行16-9）；无明确标注暴露焊盘。",
+        "view": "package metadata image",
+        "confidence": 0.95
+      },
+      "pads": {
+        "text": "Top label '0.40 PITCH' defines pitch_x. Right label '12X 0.65' indicates standard pad length (y). Bottom right label '15X 0.25' indicates standard pad width (x). Vertical dimension '1.55' spans the total outer height. Pin 1 is marked at bottom left with a width of '0.55'. The pads in columns 3 and 4 are drawn as continuous vertical rectangles connecting top and bottom.; contour check: {\"columns\": 8, \"bridged_columns\": [2, 5], \"wide_pad_alignments\": {\"bottom_left\": \"right\"}}",
+        "view": "primary recommended land pattern",
+        "confidence": 0.95
+      }
+    },
+    "source_units": "mm",
+    "uncertain_fields": [],
+    "unsupported_reason": "",
+    "notes": [
+      "根据图纸两端编号和列数派生连续编号：1..8",
+      "根据图纸两端编号和列数派生连续编号：16..9"
+    ],
+    "grid": {
+      "pitch_x": 0.4,
+      "standard_size_x": 0.25,
+      "standard_size_y": 0.65,
+      "outer_span_y": 1.55,
+      "top_numbers": [
+        "16",
+        "15",
+        "14",
+        "13",
+        "12",
+        "11",
+        "10",
+        "9"
+      ],
+      "bottom_numbers": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ],
+      "special_pads": [
+        {
+          "number": "1",
+          "size_x": 0.55,
+          "alignment": "right"
+        }
+      ],
+      "bridged_columns": [
+        2,
+        5
+      ]
+    },
+    "geometry_reading": {
+      "columns": 8,
+      "pitch_x": 0.4,
+      "standard_size_x": 0.25,
+      "standard_size_y": 0.65,
+      "outer_span_y": 1.55,
+      "pin1_corner": "bottom_left",
+      "pin1_size_x": 0.55,
+      "pin1_alignment": "right",
+      "bridged_columns": [
+        2,
+        5
+      ],
+      "evidence": "Top label '0.40 PITCH' defines pitch_x. Right label '12X 0.65' indicates standard pad length (y). Bottom right label '15X 0.25' indicates standard pad width (x). Vertical dimension '1.55' spans the total outer height. Pin 1 is marked at bottom left with a width of '0.55'. The pads in columns 3 and 4 are drawn as continuous vertical rectangles connecting top and bottom.; contour check: {\"columns\": 8, \"bridged_columns\": [2, 5], \"wide_pad_alignments\": {\"bottom_left\": \"right\"}}",
+      "confidence": 0.95,
+      "source_units": "mm"
+    },
+    "contour_topology": {
+      "columns": 8,
+      "bridged_columns": [
+        2,
+        5
+      ],
+      "wide_pad_alignments": {
+        "bottom_left": "right"
+      },
+      "top_boxes": [
+        [
+          116,
+          102,
+          11,
+          27
+        ],
+        [
+          133,
+          102,
+          11,
+          27
+        ],
+        [
+          150,
+          102,
+          11,
+          32
+        ],
+        [
+          167,
+          102,
+          11,
+          27
+        ],
+        [
+          184,
+          102,
+          11,
+          27
+        ],
+        [
+          201,
+          102,
+          11,
+          32
+        ],
+        [
+          218,
+          102,
+          11,
+          27
+        ],
+        [
+          235,
+          102,
+          10,
+          27
+        ]
+      ],
+      "bottom_boxes": [
+        [
+          104,
+          140,
+          23,
+          27
+        ],
+        [
+          133,
+          140,
+          11,
+          27
+        ],
+        [
+          150,
+          135,
+          11,
+          32
+        ],
+        [
+          167,
+          140,
+          11,
+          27
+        ],
+        [
+          184,
+          140,
+          11,
+          27
+        ],
+        [
+          201,
+          135,
+          11,
+          32
+        ],
+        [
+          218,
+          140,
+          11,
+          27
+        ],
+        [
+          235,
+          140,
+          10,
+          27
+        ]
+      ],
+      "evidence": "Closed rectangle contours paired by row; coordinates are pixel topology, never millimeter measurements"
+    },
+    "package_metadata": {
+      "name": "XDFN16 3.5x1.35, 0.4P",
+      "family": "XDFN",
+      "drawing_code": "711AW",
+      "body_x": 3.5,
+      "body_y": 1.35,
+      "body_height_max": 0.5,
+      "pin_count": 16,
+      "source_top_numbers": [
+        "1",
+        "8"
+      ],
+      "source_bottom_numbers": [
+        "16",
+        "9"
+      ],
+      "ep_present": null,
+      "evidence": "封装标题为'XDFN16 3.5x1.35, 0.4P CASE 711AW'；尺寸表D标称3.50 BSC，E标称1.35 BSC，A最大0.50；底视图显示引脚编号从1到16（顶行1-8，底行16-9）；无明确标注暴露焊盘。",
+      "confidence": 0.95,
+      "source_units": "mm"
+    }
+  },
+  "candidate": {
+    "pin_count": 16,
+    "body_x": 3.5,
+    "name": "XDFN16_3_5x1_35__0_4P",
+    "body_y": 1.35,
+    "body_height_max": 0.5,
+    "family": "XDFN",
+    "drawing_code": "711AW",
+    "pin_layout": "EXPLICIT",
+    "pads": [
+      {
+        "number": "1",
+        "x": -1.55,
+        "y": -0.45,
+        "size_x": 0.55,
+        "size_y": 0.65
+      },
+      {
+        "number": "2",
+        "x": -1.0,
+        "y": -0.45,
+        "size_x": 0.25,
+        "size_y": 0.65
+      },
+      {
+        "number": "3",
+        "x": -0.6,
+        "y": 0,
+        "size_x": 0.25,
+        "size_y": 1.55
+      },
+      {
+        "number": "4",
+        "x": -0.2,
+        "y": -0.45,
+        "size_x": 0.25,
+        "size_y": 0.65
+      },
+      {
+        "number": "5",
+        "x": 0.2,
+        "y": -0.45,
+        "size_x": 0.25,
+        "size_y": 0.65
+      },
+      {
+        "number": "6",
+        "x": 0.6,
+        "y": 0,
+        "size_x": 0.25,
+        "size_y": 1.55
+      },
+      {
+        "number": "7",
+        "x": 1.0,
+        "y": -0.45,
+        "size_x": 0.25,
+        "size_y": 0.65
+      },
+      {
+        "number": "8",
+        "x": 1.4,
+        "y": -0.45,
+        "size_x": 0.25,
+        "size_y": 0.65
+      },
+      {
+        "number": "16",
+        "x": -1.4,
+        "y": 0.45,
+        "size_x": 0.25,
+        "size_y": 0.65
+      },
+      {
+        "number": "15",
+        "x": -1.0,
+        "y": 0.45,
+        "size_x": 0.25,
+        "size_y": 0.65
+      },
+      {
+        "number": "14",
+        "x": -0.6,
+        "y": 0,
+        "size_x": 0.25,
+        "size_y": 1.55
+      },
+      {
+        "number": "13",
+        "x": -0.2,
+        "y": 0.45,
+        "size_x": 0.25,
+        "size_y": 0.65
+      },
+      {
+        "number": "12",
+        "x": 0.2,
+        "y": 0.45,
+        "size_x": 0.25,
+        "size_y": 0.65
+      },
+      {
+        "number": "11",
+        "x": 0.6,
+        "y": 0,
+        "size_x": 0.25,
+        "size_y": 1.55
+      },
+      {
+        "number": "10",
+        "x": 1.0,
+        "y": 0.45,
+        "size_x": 0.25,
+        "size_y": 0.65
+      },
+      {
+        "number": "9",
+        "x": 1.4,
+        "y": 0.45,
+        "size_x": 0.25,
+        "size_y": 0.65
+      }
+    ],
+    "pin_numbering": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "16",
+      "15",
+      "14",
+      "13",
+      "12",
+      "11",
+      "10",
+      "9"
+    ],
+    "pin1_marker": "NONE"
+  },
+  "issues": [
+    "原图包含上下连通焊盘；请确认保留连通结构还是按规则拆分，不可直接当作等长独立盘",
+    "ep_present：图中缺失，请补充",
+    "pin_numbering：来源或识别置信度不足，请核对",
+    "1 validation error for PackageSpec\n  Value error, ep_present=True 时必须同时给出 ep_x 与 ep_y [type=value_error, input_value={'pin_count': 16, 'body_x..., 'pin1_marker': 'NONE'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error"
+  ]
+}

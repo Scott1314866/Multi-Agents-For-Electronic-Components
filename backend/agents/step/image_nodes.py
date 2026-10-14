@@ -1842,12 +1842,16 @@ async def validate_dimension_chain_node(state: dict[str, Any]) -> dict[str, Any]
         if fused.family_id == "ic/gullwing_ic" and gullwing_required.issubset(values):
             checked_relationships += 3
             count = int(round(values["nominal_pin_count"]))
-            if count < 2 or count % 2:
-                conflicts.append("nominal_pin_count:not_even")
-            else:
-                expected_span = (count // 2 - 1) * values["terminal_pitch"]
-                if abs(expected_span - values["pin_span"]) > 0.05:
-                    conflicts.append("pin_span!=pitch*(pins_per_side-1)")
+            if count < 3 or abs(count-values['nominal_pin_count'])>1e-9:
+                conflicts.append("nominal_pin_count:not_integer_or_below_3")
+            elif (count%2==0 and not any(name in values for name in gullwing_ic.ROW_PARAMETERS)) or all(name in values for name in gullwing_ic.ROW_PARAMETERS):
+                from backend.agents.step.features.gullwing_layout import row_positions, validate_row_envelopes
+                try:
+                    row_positions(gullwing_ic.layout_parameters(values))
+                    if 'terminal_width' in values:validate_row_envelopes(gullwing_ic.layout_parameters(values))
+                    from backend.agents.step.features.gullwing_layout import validate_profile_envelopes
+                    validate_profile_envelopes(values)
+                except ValueError as exc:conflicts.append(str(exc))
             if values["body_width"] >= values["overall_width"]:
                 conflicts.append("body_width>=overall_width")
             expected_height = values["housing_height"] + values["body_standoff"]
@@ -1858,7 +1862,7 @@ async def validate_dimension_chain_node(state: dict[str, Any]) -> dict[str, Any]
                 # End leads occupy row_span plus one lead width along X. A
                 # shorter body length usually means the two top-view axes were
                 # confused during extraction; ask for the drawing dimension.
-                if values["body_length"] + 0.05 < values["pin_span"] + values["terminal_width"]:
+                if not all(name in values for name in gullwing_ic.ROW_WIDTH_PARAMETERS) and values["body_length"] + 0.05 < values["pin_span"] + values["terminal_width"]:
                     conflicts.append("body_length<pin_span+terminal_width")
         quad_required = {
             "nominal_pin_count", "terminal_pitch", "terminal_span",
@@ -1990,9 +1994,31 @@ async def validate_dimensions_node(state: dict[str, Any]) -> dict[str, Any]:
     else:
         gate = validate_fused_dimensions(
             fused,
-            required_fields=tuple(contract["required_parameters"]),
+            required_fields=(gullwing_ic.required_parameters(fused.parameters,package_type=fused.package_type)
+                             if fused.family_id==gullwing_ic.FAMILY_ID else tuple(contract["required_parameters"])),
             required_features=tuple(contract["required_features"]),
         ).model_dump()
+        if fused.family_id==gullwing_ic.FAMILY_ID:
+            counts=[p.value for p in fused.parameters if p.canonical_name=='nominal_pin_count']
+            asymmetric=any(p.canonical_name in gullwing_ic.ROW_WIDTH_PARAMETERS for p in fused.parameters)
+            if re.match(r'^SOT\b|^SOT\d',fused.package_type.strip(),re.I) or asymmetric or (counts and float(counts[0]).is_integer() and int(counts[0])%2):
+                # The five-pin incident exposed numeric table rows rebound by
+                # symmetric-outline heuristics (b/c/L cyclically interchanged).
+                # Preserve their candidates, but require explicit role review
+                # rather than treating the heuristic's confidence as proof.
+                unconfirmed=[p.canonical_name for p in fused.parameters
+                    if p.evidence_kind!='human_input'
+                    and p.target_feature.startswith(('family_constraint:','family_projection_constraint:'))]
+                unit_unconfirmed=[p.canonical_name for p in fused.parameters
+                    if p.evidence_kind not in {'human_input','derived'} and p.unit=='mm'
+                    and re.search(r'inch|\bmil\b',p.target_feature+' '+' '.join(p.raw_texts),re.I)]
+                unconfirmed=sorted(set(unconfirmed)|set(unit_unconfirmed))
+                if unconfirmed:
+                    gate.update(passed=False,status='stopped_insufficient_extraction',
+                        low_confidence_fields=sorted(set(gate['low_confidence_fields'])|set(unconfirmed)),
+                        role_unconfirmed_fields=unconfirmed,
+                        unit_unconfirmed_fields=unit_unconfirmed,
+                        evidence_report=gate['evidence_report']+' 参数含启发式符号绑定或英寸来源与毫米单位不一致，请核对原图符号与毫米列；这些候选不会自动用于生成。')
     _write_json(Path(state["output_dir"]) / "dimension_gate.json", gate)
     return {
         "dimension_gate": gate,
@@ -2536,6 +2562,17 @@ def verify_step_node(state: dict[str, Any]) -> dict[str, Any]:
             "geometry_errors_mm": geometry_errors,
             "model_source": model_source,
         }
+        if model_source=='local_feature_ir' and state.get('feature_ir',{}).get('family_id')==gullwing_ic.FAMILY_ID:
+            from backend.agents.step.features.gullwing_verification import verify_gullwing_rows
+            ir=state['feature_ir']
+            feature=next((f for f in ir.get('features',[]) if f.get('feature_type')=='gullwing_lead_array'),None)
+            if feature:
+                params={k:(v['value'] if isinstance(v,dict) else v) for k,v in feature['parameters'].items()}
+                explicit=bool(re.match(r'^SOT\b|^SOT\d',ir.get('package_type','').strip(),re.I))
+                row_check=verify_gullwing_rows(metrics['shape'],params,require_explicit=explicit)
+                verification['gullwing_rows']=row_check
+                passed=passed and row_check['passed']
+                verification['passed']=passed
         if not passed:
             return {"verification": verification, "status": "failed"}
         return {"verification": verification, "status": "step_verified"}

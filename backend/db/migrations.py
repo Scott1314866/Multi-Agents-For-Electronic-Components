@@ -82,6 +82,26 @@ async def run_migrations() -> None:
     """
     async with AsyncSessionLocal() as session:
         async with session.begin():
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS registration_invites (
+                    id UUID PRIMARY KEY,
+                    token_hash VARCHAR(64) NOT NULL UNIQUE,
+                    token_hint VARCHAR(8) NOT NULL,
+                    tenant_id VARCHAR(64) NOT NULL,
+                    created_by UUID NOT NULL REFERENCES users(id),
+                    label VARCHAR(100) NOT NULL DEFAULT '',
+                    max_uses INTEGER NOT NULL CHECK (max_uses BETWEEN 1 AND 100),
+                    used_count INTEGER NOT NULL DEFAULT 0,
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    revoked_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CHECK (used_count BETWEEN 0 AND max_uses)
+                )
+            """))
+            await session.execute(text("""
+                CREATE INDEX IF NOT EXISTS registration_invites_tenant_idx
+                ON registration_invites (tenant_id, created_at DESC)
+            """))
             await session.execute(
                 text("""
                     ALTER TABLE step_drawings
@@ -95,3 +115,7 @@ async def run_migrations() -> None:
                 await _replace_status_check(
                     session, table, f"{table}_status_hitl_check", HITL_STATUSES
                 )
+            await session.execute(text("""
+                ALTER TABLE symbol_drawings
+                ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ
+            """))

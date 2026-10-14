@@ -228,8 +228,8 @@ def _judge_pin_geometry(
 ) -> list[Assertion]:
     """逐个引脚比对 bbox：尺寸应等于阻焊尺寸，中心应等于派生坐标。
 
-    ``verify.log`` 的引脚 bbox 量的是**阻焊矩形**（不是铜箔），所以它可以
-    反过来验证 padstack 尺寸 —— 这是纯文本唯一能校验焊盘几何的途径。
+    ``verify.log`` 的引脚 bbox 包含阻焊开口，验证其尺寸与中心。
+    圆形铜盘另外回读原生 figureName，防止把同尺寸矩形误判为圆盘。
     """
     checks: list[Assertion] = []
     by_number = {p.number: p for p in verify.pins}
@@ -242,15 +242,24 @@ def _judge_pin_geometry(
             )
             continue
         center = record.bbox.center
-        size_ok = _close(record.bbox.width, derived.land_pad.mask[0]) and _close(
-            record.bbox.height, derived.land_pad.mask[1]
+        pad = derived.pin_pads.get(pin.number, derived.land_pad)
+        if pad.shape == "CIRCLE":
+            checks.append(Assertion(f"引脚 {pin.number} 的铜盘形状", record.shape == "CIRCLE",
+                                    expected="CIRCLE", actual=record.shape or "未回读"))
+            copper = record.copper_bbox
+            checks.append(Assertion(f"引脚 {pin.number} 的铜盘直径",
+                                    copper is not None and _close(copper.width, pad.copper[0]) and _close(copper.height, pad.copper[1]),
+                                    expected=f"{pad.copper[0]} mm",
+                                    actual=f"{copper.width}×{copper.height} mm" if copper else "未回读"))
+        size_ok = _close(record.bbox.width, pad.mask[0]) and _close(
+            record.bbox.height, pad.mask[1]
         )
         center_ok = _close(center[0], pin.x) and _close(center[1], pin.y)
         checks.append(
             Assertion(
                 f"引脚 {pin.number} 的 bbox",
                 size_ok and center_ok,
-                expected=f"{derived.land_pad.mask[0]}×{derived.land_pad.mask[1]} @ ({pin.x}, {pin.y})",
+                expected=f"{pad.mask[0]}×{pad.mask[1]} @ ({pin.x}, {pin.y})",
                 actual=f"{record.bbox.width}×{record.bbox.height} @ {center}",
             )
         )
@@ -336,7 +345,7 @@ def judge_build(
     )
 
     # 只信副作用：不看函数的返回值，看 toDisk 是否真的执行了。
-    for padstack in (spec.land_padstack_name, spec.ep_padstack_name):
+    for padstack in (*dict.fromkeys(spec.signal_padstack_names.values()), spec.ep_padstack_name):
         if padstack == spec.ep_padstack_name and not spec.ep_present:
             continue
         record = build.padstacks.get(padstack, {})

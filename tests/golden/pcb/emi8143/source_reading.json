@@ -1,0 +1,32 @@
+{
+  "reading_source": "datasheet_crosscheck_by_assistant",
+  "source": {"datasheet_page": 9, "drawing": "CASE 711AW", "reference_image_used_as_input": false},
+  "reading": {
+    "spec": {"name": "XDFN16_3P5X1P35_P0P4", "family": "XDFN", "drawing_code": "CASE 711AW / XDFN16 3.5x1.35, 0.4P",
+      "body_x": 3.5, "body_y": 1.35, "body_height_max": 0.5, "pin_count": 16,
+      "pin_layout": "EXPLICIT", "ep_present": false},
+    "source_units": "mm",
+    "grid": {
+      "pitch_x": 0.4, "standard_size_x": 0.25, "standard_size_y": 0.65, "outer_span_y": 1.55,
+      "top_numbers": ["16", "15", "14", "13", "12", "11", "10", "9"],
+      "bottom_numbers": ["1", "2", "3", "4", "5", "6", "7", "8"],
+      "special_pads": [{"number": "1", "size_x": 0.55, "alignment": "right"}],
+      "bridged_columns": [2, 5]
+    },
+    "evidence": {
+      "name": {"text": "Page 9: XDFN16 3.5x1.35, 0.4P; filesystem name uses P for decimal separators", "view": "title", "confidence": 1},
+      "family": {"text": "Page 9: XDFN16", "view": "title", "confidence": 1},
+      "drawing_code": {"text": "Page 9: CASE 711AW", "view": "title", "confidence": 1},
+      "body_x": {"text": "Page 9: D = 3.50 BSC mm", "view": "body dimension table", "confidence": 1},
+      "body_y": {"text": "Page 9: E = 1.35 BSC mm", "view": "body dimension table", "confidence": 1},
+      "body_height_max": {"text": "Page 9: A max = 0.50 mm", "view": "side dimension table", "confidence": 1},
+      "pin_count": {"text": "XDFN16; bottom view corners 1,8,9,16", "view": "bottom", "confidence": 1},
+      "pin_layout": {"text": "Two horizontal rows with eight contacts per row; explicit coordinates preserve special land 1", "view": "recommended footprint", "confidence": 1},
+      "pin_numbering": {"text": "Bottom view 1..8 on upper row and 16..9 on lower row; mirror Y to recommended footprint's pin 1 at bottom left", "view": "bottom to recommended footprint", "confidence": 1},
+      "pads": {"text": "0.40 PITCH; 15X width 0.25; pin 1 width 0.55 aligned to upper pad right edge; 12X short-land length 0.65; outer Y span 1.55. Columns 2 and 5 are continuous ground lands (3/14,6/11).", "view": "recommended footprint", "confidence": 1},
+      "ep_present": {"text": "No central exposed pad in the package bottom or land pattern; the two long regions are ground terminals, not an EP", "view": "bottom and recommended footprint", "confidence": 1}
+    },
+    "uncertain_fields": [], "unsupported_reason": "",
+    "notes": ["Source copper contains bridged ground regions; the user's explicit independent-land policy is applied only at the human confirmation stage.", "No dimension, coordinate or pin ID is sourced from the result reference screenshot."]
+  }
+}

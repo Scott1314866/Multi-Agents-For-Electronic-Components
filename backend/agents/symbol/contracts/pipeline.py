@@ -21,6 +21,7 @@ from backend.agents.symbol.contracts.extract import (
     Extraction,
     extract_pins_from_table,
 )
+from backend.agents.symbol.contracts.pkgname import _PACKAGE_PREFIXES
 
 #: 一张表至少要有这么多引脚才算"引脚表"（与 ``selfcheck.MIN_PINS`` 同源）。
 MIN_TABLE_PINS = 2
@@ -78,7 +79,7 @@ def best_table(
     package: str = "",
     device: str = "",
 ) -> tuple[int, Extraction] | None:
-    """逐页试表，返回第一张**真正解析得出引脚**的表。
+    """逐页试表，返回匹配封装的第一张引脚表，并合并同编号的相邻续表。
 
     Args:
         content_list: MinerU 的 ``content_list``；每块的 ``page_idx`` 是**原 PDF 的
@@ -92,6 +93,7 @@ def best_table(
         由调用方决定是"退回全档重跑"还是"停下来问人"。
     """
     wanted = {int(page) for page in (pages or [])}
+    tables = []
     for block in content_list or []:
         if str(block.get("type") or "").lower() != "table":
             continue
@@ -101,14 +103,46 @@ def best_table(
         page = int(block.get("page_idx", -1)) + 1  # 0 起 → 1 起
         if page < 1:
             continue
+        extraction = extract_pins_from_table(html, page=page, device=device, package=package)
+        captions = block.get("table_caption") or []
+        caption = captions if isinstance(captions, str) else " ".join(str(c) for c in captions)
+        context = caption + " " + " ".join(extraction.headers)
+        styles = {style for style in _PACKAGE_PREFIXES if re.search(r"\b" + style + r"\b", context, re.I)}
+        selected = next((style for style in _PACKAGE_PREFIXES if re.match(r"^" + style + r"(?:\b|\d)", package, re.I)), "")
+        if selected and styles and selected not in styles:
+            continue
+        tables.append((page, extraction, caption))
+
+    for index, (page, extraction, caption) in enumerate(tables):
         if wanted and page not in wanted:
             continue
-        extraction = extract_pins_from_table(html, page=page, device=package or device)
-        # Some manuals put model names, rather than package codes, in the number headers.
-        headers = [header.casefold() for header in extraction.headers]
-        if device and package and not any(package.casefold() in header for header in headers):
-            if any(device.casefold() in header for header in headers):
-                extraction = extract_pins_from_table(html, page=page, device=device)
-        if len(extraction.pins) >= MIN_TABLE_PINS:
-            return page, extraction
+        if len(extraction.pins) < MIN_TABLE_PINS:
+            continue
+        # Candidate-page selection locates the start, not the extent, of a table.
+        # Only explicit same-table continuations with the same columns are merged.
+        identity = re.search(r"\bTable\s+(\d+)\b", caption, re.I)
+        last_page = page
+        for next_page, continuation, next_caption in tables[index + 1:]:
+            if next_page > last_page + 1:
+                break
+            next_identity = re.search(r"\bTable\s+(\d+)\b", next_caption, re.I)
+            same_id = identity and next_identity and identity[1] == next_identity[1]
+            if not (same_id and re.search(r"\bcontinu(?:ed|ation)\b", next_caption, re.I)
+                    and [h.split("\n")[-1].strip().casefold() for h in extraction.headers]
+                    == [h.split("\n")[-1].strip().casefold() for h in continuation.headers]):
+                break
+            current = {pin.pin_number: pin for pin in extraction.pins}
+            for pin in continuation.pins:
+                if pin.pin_number not in current:
+                    extraction.pins.append(pin)
+                    current[pin.pin_number] = pin
+                elif (pin.name, pin.type, pin.description) != (
+                        current[pin.pin_number].name, current[pin.pin_number].type,
+                        current[pin.pin_number].description):
+                    # Keep contradictory duplicates for downstream self-check to block.
+                    extraction.pins.append(pin)
+                    extraction.warnings.append(f"续表引脚 {pin.pin_number} 与前页冲突，请核对")
+            extraction.warnings.extend(continuation.warnings)
+            last_page = next_page
+        return page, extraction
     return None

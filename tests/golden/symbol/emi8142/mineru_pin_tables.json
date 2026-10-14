@@ -1,0 +1,36 @@
+[
+  {
+    "type": "table",
+    "img_path": "images/8d2187a527f991c30c4eb2c7436206a0d16d00e0b1181f6b32fc631d655b0f68.jpg",
+    "table_caption": [
+      "PIN FUNCTION DESCRIPTION"
+    ],
+    "table_footnote": [],
+    "table_body": "<table><tr><td rowspan=2 colspan=1>Pin Name</td><td rowspan=1 colspan=3>Device Pin</td><td rowspan=2 colspan=1>Type</td><td rowspan=2 colspan=1>Description</td></tr><tr><td rowspan=1 colspan=1>EMI8141</td><td rowspan=1 colspan=1>EMI8142</td><td rowspan=1 colspan=1>EMI8143</td></tr><tr><td rowspan=1 colspan=1>In_1+</td><td rowspan=1 colspan=1>1</td><td rowspan=1 colspan=1>1</td><td rowspan=1 colspan=1>1</td><td rowspan=1 colspan=1>1/0</td><td rowspan=1 colspan=1>CMF Channel 1+ to Connector (External)</td></tr><tr><td rowspan=1 colspan=1>In_1-</td><td rowspan=1 colspan=1>2</td><td rowspan=1 colspan=1>2</td><td rowspan=1 colspan=1>2</td><td rowspan=1 colspan=1>1/0</td><td rowspan=1 colspan=1>CMF Channel 1– to Connector (External)</td></tr><tr><td rowspan=1 colspan=1>Out_1+</td><td rowspan=1 colspan=1>6</td><td rowspan=1 colspan=1>10</td><td rowspan=1 colspan=1>16</td><td rowspan=1 colspan=1>1/0</td><td rowspan=1 colspan=1>CMF Channel 1+ to ASIC (Internal)</td></tr><tr><td rowspan=1 colspan=1>Out_1-</td><td rowspan=1 colspan=1>5</td><td rowspan=1 colspan=1>9</td><td rowspan=1 colspan=1>15</td><td rowspan=1 colspan=1>1/O</td><td rowspan=1 colspan=1>CMF Channel 1– to ASIC (Internal)</td></tr><tr><td rowspan=1 colspan=1>In_2+</td><td rowspan=1 colspan=1>NA</td><td rowspan=1 colspan=1>4</td><td rowspan=1 colspan=1>4</td><td rowspan=1 colspan=1>1/0</td><td rowspan=1 colspan=1>CMF Channel 2+ to Connector (External)</td></tr><tr><td rowspan=1 colspan=1>In_2-</td><td rowspan=1 colspan=1>NA</td><td rowspan=1 colspan=1>5</td><td rowspan=1 colspan=1>5</td><td rowspan=1 colspan=1>1/0</td><td rowspan=1 colspan=1>CMF Channel 2– to Connector (External)</td></tr><tr><td rowspan=1 colspan=1>Out_2+</td><td rowspan=1 colspan=1>NA</td><td rowspan=1 colspan=1>7</td><td rowspan=1 colspan=1>13</td><td rowspan=1 colspan=1>1/0</td><td rowspan=1 colspan=1>CMF Channel 2+ to ASIC (Internal)</td></tr><tr><td rowspan=1 colspan=1>Out_2-</td><td rowspan=1 colspan=1>NA</td><td rowspan=1 colspan=1>6</td><td rowspan=1 colspan=1>12</td><td rowspan=1 colspan=1>I/O</td><td rowspan=1 colspan=1>CMF Channel 2– to ASIC (Internal)</td></tr><tr><td rowspan=1 colspan=1>In_3+</td><td rowspan=1 colspan=1>NA</td><td rowspan=1 colspan=1>NA</td><td rowspan=1 colspan=1>7</td><td rowspan=1 colspan=1>1/O</td><td rowspan=1 colspan=1>CMF Channel 3+ to Connector (External)</td></tr><tr><td rowspan=1 colspan=1>In_3-</td><td rowspan=1 colspan=1>NA</td><td rowspan=1 colspan=1>NA</td><td rowspan=1 colspan=1>8</td><td rowspan=1 colspan=1>1/0</td><td rowspan=1 colspan=1>CMF Channel 3– to Connector (External)</td></tr><tr><td rowspan=1 colspan=1>Out_3+</td><td rowspan=1 colspan=1>NA</td><td rowspan=1 colspan=1>NA</td><td rowspan=1 colspan=1>10</td><td rowspan=1 colspan=1>1/0</td><td rowspan=1 colspan=1>CMF Channel 3+ to ASIC (Internal)</td></tr><tr><td rowspan=1 colspan=1>Out_3-</td><td rowspan=1 colspan=1>NA</td><td rowspan=1 colspan=1>NA</td><td rowspan=1 colspan=1>9</td><td rowspan=1 colspan=1>1/O</td><td rowspan=1 colspan=1>CMF Channel 3– to ASIC (Internal)</td></tr><tr><td rowspan=1 colspan=1>VN</td><td rowspan=1 colspan=1>3,4</td><td rowspan=1 colspan=1>3,8</td><td rowspan=1 colspan=1>3,6,14,11</td><td rowspan=1 colspan=1>GND</td><td rowspan=1 colspan=1>Ground</td></tr></table>",
+    "bbox": [
+      96,
+      83,
+      903,
+      376
+    ],
+    "page_idx": 1
+  },
+  {
+    "type": "table",
+    "img_path": "images/a2ab6e5db63d7b7cf6f757014b529b735b05dde053aed790b0fe7f94aea485c5.jpg",
+    "table_caption": [
+      "ABSOLUTE MAXIMUM RATINGS (TA = 25°C unless otherwise noted)"
+    ],
+    "table_footnote": [
+      "Stresses exceeding those listed in the Maximum Ratings table may damage the device. If any of these limits are exceeded, device functionality should not be assumed, damage may occur and reliability may be affected."
+    ],
+    "table_body": "<table><tr><td rowspan=1 colspan=1>Parameter</td><td rowspan=1 colspan=1>Symbol</td><td rowspan=1 colspan=1>Value</td><td rowspan=1 colspan=1>Unit</td></tr><tr><td rowspan=1 colspan=1>Operating Temperature Range</td><td rowspan=1 colspan=1>TOP</td><td rowspan=1 colspan=1>-40 to +85</td><td rowspan=1 colspan=1>℃</td></tr><tr><td rowspan=1 colspan=1>Storage Temperature Range</td><td rowspan=1 colspan=1>TSTG</td><td rowspan=1 colspan=1>-65 to +150</td><td rowspan=1 colspan=1>℃</td></tr><tr><td rowspan=1 colspan=1>Maximum Lead Temperature for Soldering Purposes(1/8” from Case for 10 seconds)</td><td rowspan=1 colspan=1>TL</td><td rowspan=1 colspan=1>260</td><td rowspan=1 colspan=1>℃</td></tr><tr><td rowspan=1 colspan=1>DC Current per Line</td><td rowspan=1 colspan=1>ILINE</td><td rowspan=1 colspan=1>100</td><td rowspan=1 colspan=1>mA</td></tr></table>",
+    "bbox": [
+      96,
+      412,
+      901,
+      522
+    ],
+    "page_idx": 1
+  }
+]

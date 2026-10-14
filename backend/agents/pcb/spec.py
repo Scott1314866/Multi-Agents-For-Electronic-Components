@@ -20,13 +20,31 @@
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-PinLayout = Literal["DUAL", "QUAD"]
+PinLayout = Literal["DUAL", "QUAD", "EXPLICIT"]
 PasteMode = Literal["MATCH_LAND", "INSET", "NONE"]
 Pin1Marker = Literal["TRIANGLE", "NONE"]
+
+
+class RectPadSpec(BaseModel):
+    """Copper land in top-view coordinates; legacy rectangles remain the default."""
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    number: str = Field(pattern=r"^[A-Za-z0-9_]+$", min_length=1, max_length=32)
+    x: float
+    y: float
+    size_x: float = Field(gt=0)
+    size_y: float = Field(gt=0)
+    shape: Literal["RECTANGLE", "CIRCLE"] = "RECTANGLE"
+
+    @model_validator(mode="after")
+    def _check_shape(self):
+        if self.shape == "CIRCLE" and abs(self.size_x - self.size_y) > 1e-9:
+            raise ValueError("圆形焊盘的宽度和长度必须相等，均填写铜盘直径")
+        return self
 
 
 class PackageSpec(BaseModel):
@@ -35,10 +53,11 @@ class PackageSpec(BaseModel):
     字段分组与 ``build_wson8.il`` 的段落一一对应，便于逐段对照迁移。
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     # ── 标识（对应 bName / bLand / bEp，L7-L9）─────────────────────
     name: str = Field(
+        pattern=r"^[A-Za-z][A-Za-z0-9_]{0,79}$",
         description="设计名；同时派生 padstack 名与 .dra/.psm 文件名，如 WSON8_3X3"
     )
     family: str = Field(default="WSON", description="封装族，决定几何规则集与编号约定")
@@ -53,22 +72,25 @@ class PackageSpec(BaseModel):
     )
 
     # ── 引脚 ─────────────────────────────────────────────────────
-    pin_count: int = Field(gt=0, description="引脚总数，不含散热盘")
-    pin_layout: PinLayout = Field(default="DUAL", description="DUAL 双列 / QUAD 四边")
-    pin_pitch: float = Field(gt=0, description="同侧相邻引脚中心距")
-    pin_columns_x: list[float] = Field(
+    pin_count: int = Field(gt=0, le=512, description="引脚总数，不含散热盘")
+    pin_layout: PinLayout = Field(default="DUAL", description="DUAL 双列 / EXPLICIT 逐焊盘 / QUAD 暂未实现")
+    pin_pitch: float | None = Field(default=None, gt=0, description="同侧相邻引脚中心距")
+    pin_columns_x: list[float] | None = Field(
+        default=None,
         min_length=2, max_length=2, description="两列引脚的 X 坐标（左、右）"
     )
     pin_numbering: list[str] = Field(
         description="按物理位置排列的引脚号：左上起、逆时针逐列填"
     )
+    pads: list[RectPadSpec] = Field(default_factory=list, max_length=512,
+                                  description="EXPLICIT 布局：逐焊盘顶视坐标、形状与铜箔尺寸")
     pin_text_offset: float = Field(
         default=0.10, ge=0, description="引脚号文字相对焊盘向外偏移"
     )
 
     # ── 焊盘 ─────────────────────────────────────────────────────
-    land_x: float = Field(gt=0, description="信号焊盘 X 尺寸（长边，指向本体中心）")
-    land_y: float = Field(gt=0, description="信号焊盘 Y 尺寸（跨 pitch 方向）")
+    land_x: float | None = Field(default=None, gt=0, description="信号焊盘 X 尺寸（长边，指向本体中心）")
+    land_y: float | None = Field(default=None, gt=0, description="信号焊盘 Y 尺寸（跨 pitch 方向）")
     nsmd: bool = Field(
         default=True, description="阻焊按 expansion 外扩（NSMD）；False 则内缩"
     )
@@ -132,9 +154,35 @@ class PackageSpec(BaseModel):
         if self.pin_layout == "QUAD" and self.pin_count % 4:
             raise ValueError("QUAD 封装的引脚数必须能被 4 整除")
         if self.ep_present and (self.ep_x is None or self.ep_y is None):
-            raise ValueError("ep_present=True 时必须同时给出 ep_x 与 ep_y")
-        if self.pin_columns_x[0] >= self.pin_columns_x[1]:
+            raise ValueError("选择有独立散热盘时，必须同时填写散热盘宽度和长度；没有散热盘请选择“没有”")
+        for number in [*self.pin_numbering, self.ep_pin_number]:
+            if not re.fullmatch(r"[A-Za-z0-9_]{1,32}", number):
+                raise ValueError("引脚号只能包含字母、数字或下划线")
+        if self.ep_present and self.ep_pin_number in self.pin_numbering:
+            raise ValueError("散热盘编号不能与信号脚重复")
+        if self.pin_layout == "EXPLICIT":
+            if len(self.pads) != self.pin_count or [p.number for p in self.pads] != self.pin_numbering:
+                raise ValueError("pads 数量/顺序必须与 pin_count、pin_numbering 一致")
+            if any(v is not None for v in (self.pin_pitch, self.pin_columns_x, self.land_x, self.land_y)):
+                raise ValueError("EXPLICIT 布局使用 pads，不应混入 DUAL 几何参数")
+        elif self.pads:
+            raise ValueError("逐焊盘参数仅用于 EXPLICIT 布局")
+        elif any(v is None for v in (self.pin_pitch, self.pin_columns_x, self.land_x, self.land_y)):
+            raise ValueError("DUAL/QUAD 布局需要 pin_pitch、pin_columns_x、land_x、land_y")
+        if self.pin_columns_x is not None and self.pin_columns_x[0] >= self.pin_columns_x[1]:
             raise ValueError("pin_columns_x 必须左小右大")
+        if self.units != "millimeters":
+            raise ValueError("当前生成器仅支持 millimeters")
+        for field in ("family", "drawing_code", "refdes_prefix", "refdes_text_block", "pin_text_block"):
+            if any(char in getattr(self, field) for char in ('"', "\\", "\n", "\r")):
+                raise ValueError(f"{field} 不能包含引号、反斜杠或换行")
+        if self.extents[0] >= self.extents[2] or self.extents[1] >= self.extents[3]:
+            raise ValueError("图纸范围必须左下小于右上")
+        for width, height in ([(p.size_x, p.size_y) for p in self.pads] or [(self.land_x, self.land_y)]) + ([(self.ep_x, self.ep_y)] if self.ep_present else []):
+            if not self.nsmd and min(width, height) <= 2 * self.mask_expansion:
+                raise ValueError("阻焊内缩后尺寸必须大于零")
+            if self.paste_mode == "INSET" and min(width, height) <= 2 * self.paste_inset:
+                raise ValueError("钢网内缩后尺寸必须大于零")
         return self
 
     # ── 派生命名（对应 bLand / bEp，L8-L9）──────────────────────
@@ -143,6 +191,13 @@ class PackageSpec(BaseModel):
     def land_padstack_name(self) -> str:
         """信号脚焊盘堆栈名。"""
         return f"{self.name}_LAND"
+
+    @property
+    def signal_padstack_names(self) -> dict[str, str]:
+        if self.pin_layout == "EXPLICIT":
+            return {pad.number: (self.land_padstack_name if i == 0 else f"{self.land_padstack_name}_{pad.number}")
+                    for i, pad in enumerate(self.pads)}
+        return {number: self.land_padstack_name for number in self.pin_numbering}
 
     @property
     def ep_padstack_name(self) -> str:

@@ -1,7 +1,9 @@
 """符号生成工作流的主节点与路由。
 
-链路（对应源程序的 ``pipeline.discover`` + ``pipeline.run``，但拆成了可单独
-暂停、单独重试的单元）：
+图片链路直接读取编号、名称和坐标，经自检后还原布局并生成符号。
+看不清的引脚进入针对性询问，识别结果与布局证据保存到 checkpoint。
+
+PDF 链路（对应 ``pipeline.discover`` + ``pipeline.run``）：
 
     validate_input → locate_pages → parse_document → discover_names
       → [ask_device] → [ask_package] → pick_table → render_pages → vision_extract
@@ -9,7 +11,7 @@
       → self_check → [ask_check_questions] → build_layout → [confirm_output]
       → generate_capture → finalize
 
-源的纪律照搬：
+PDF 通道约定：
 
 * **双通道职责划分** —— 文本通道给编号/名称/类型/描述，视觉通道只给图形结构；
 * **降级要有痕迹** —— 选页、选列、跳过的行都写进 ``warnings`` / ``notes``；
@@ -18,27 +20,28 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, fields
 import json
 from pathlib import Path
 import tempfile
 from typing import Any
 
 from backend.agents.symbol import config
-from backend.agents.symbol.contracts.extract import FigureInfo
+from backend.agents.symbol.contracts.extract import FigureInfo, canonical_dual_row
 from backend.agents.symbol.contracts.layout import build_layout, describe, preview
 from backend.agents.symbol.contracts.merge import merge_channels
 from backend.agents.symbol.contracts.models import Conflict, Evidence, Pin
 from backend.agents.symbol.contracts.pdf_locator import figure_pages, locate, slim_pages
 from backend.agents.symbol.contracts.pipeline import best_table, guess_device
-from backend.agents.symbol.contracts.selfcheck import check as run_selfcheck
-from backend.agents.symbol.tools.capture import CaptureToolchainUnavailable, generate as capture_generate
+from backend.agents.symbol.contracts.selfcheck import Finding, check as run_selfcheck
+from backend.agents.symbol.tools.capture import CaptureToolchainUnavailable, generate_configured as capture_generate
 from backend.agents.symbol.tools.mineru import MineruOfflineError
 from backend.agents.symbol.tools.render import render_page
 from backend.agents.symbol.tools.review import ReviewMismatch, ReviewResult, review_pins
 from backend.agents.symbol.tools.vision import VisionClient
-from backend.agents.symbol.workers import capture_node, network_node, render_node
+from backend.agents.symbol.workers import network_node, render_node
 from backend.core.logger import get_logger
+from backend.core.cadence_scheduler import cadence_scheduler, resolve_mode
 
 logger = get_logger(__name__)
 
@@ -55,8 +58,11 @@ _REVIEW_PROMPT = """你在核查一张元器件手册的引脚图。
 
 【页面】第 {page} 页
 【器件】{device}
+【封装】{package}
 
 请只看**图形结构**：每个引脚号出现在哪条边上、在那条边上排第几。
+优先读取匹配封装的 top/bottom view 引脚布局，不要把电气原理图里的接地位置
+当作封装位置。底视图需转换为顶视图；双排 DFN 可保留上/下两排，程序会转换为符号左右排列。
 不要读密集小字表格里的引脚名与描述 —— 那是另一个通道的职责。
 
 只输出 JSON（不要 Markdown 代码块）：
@@ -98,15 +104,29 @@ def _pins_to_dicts(pins: list[Pin]) -> list[dict]:
 
 
 def _dicts_to_conflicts(items: list[dict] | None) -> list[Conflict]:
-    return [Conflict(**item) for item in (items or [])]
+    # Audit metadata remains in state; only contract fields enter self-check.
+    allowed = {field.name for field in fields(Conflict)}
+    return [Conflict(**{key: value for key, value in item.items() if key in allowed})
+            for item in (items or [])]
 
 
 # ── 输入与定位 ────────────────────────────────────────────────────
 
 
 async def validate_input_node(state: dict[str, Any]) -> dict[str, Any]:
-    """校验输入 PDF 存在且带 ``%PDF-`` 签名。"""
+    """校验图片可解码；PDF 输入检查存在与文件签名。"""
     try:
+        if state.get("input_kind") == "image" or state.get("image_path"):
+            from backend.agents.symbol.contracts.image_symbol import normalize_image
+            raw = str(state.get("image_path") or "").strip()
+            path = Path(raw)
+            if not raw or not path.is_file():
+                raise ValueError("封装图片不存在")
+            _, meta = normalize_image(path.read_bytes())
+            work_dir = Path(state.get("work_dir") or tempfile.mkdtemp(prefix="symbol-"))
+            work_dir.mkdir(parents=True, exist_ok=True)
+            return {"input_kind": "image", "image_path": str(path.resolve()),
+                    "image_meta": meta, "work_dir": str(work_dir), "status": "input_valid"}
         raw = str(state.get("pdf_path") or "").strip()
         if not raw:
             raise ValueError("缺少 pdf_path：请给出手册 PDF 的路径")
@@ -127,6 +147,51 @@ async def validate_input_node(state: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         logger.warning("symbol.validate_input.failed", error=str(exc))
         return {"errors": _errors(state, str(exc)), "status": "failed"}
+
+
+_IMAGE_SYMBOL_PROMPT = """请照这张封装引脚图创建 OrCAD 符号数据。
+目标型号提示：{device}；封装提示：{package}。只读取目标器件图。
+读取图上明确可见的型号、封装、引脚总数、每个引脚号与名称，保留名称的下标含义
+（例如 V 后下标 DD 输出 VDD），以及正负号、低有效标记。
+不要根据型号常识补充图中没有的引脚，不推断电气类型。
+body_bbox 是芯片主体矩形的边界，不包含标题、图框、引脚编号框和外围文字。
+每个引脚的 x/y 是连接点在主体边界上的位置。坐标均按整张图归一化到 0..1，
+左上角为原点。对齐的引脚使用相同 y（左右两侧）或 x（上下两侧）。
+左/右侧顺序从上到下，顶/底侧从左到右。不要用编号大小决定位置。
+只输出 JSON：
+{{"device":"图中型号，没有则空","package":"图中封装，没有则空",
+"pin_count":5,"body_bbox":[0.4,0.3,0.6,0.9],
+"pins":[{{"pin_number":"1","name":"VDD","side":"left","x":0.4,"y":0.4,
+"confidence":0.99,"uncertain":false}}],"notes":"只记录看不清或不确定之处"}}
+pin_count 只填图中明确标注的数量，没有数量标注时填 null。
+side 只能是 left/right/top/bottom/unknown。看不清的名称填空，uncertain=true，
+不要猜。confidence 为该引脚读取的置信度，0..1。"""
+
+
+async def extract_image_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Single image -> visible pins and drawing positions, without PDF/MinerU."""
+    try:
+        from backend.agents.symbol.contracts.image_symbol import read_image_payload
+        payload = await _ask_vision([state["image_path"]], _IMAGE_SYMBOL_PROMPT.format(
+            device=state.get("device") or "未指定", package=state.get("package") or "未指定"))
+        reading = read_image_payload(payload, image_size=state["image_meta"])
+        device = str(state.get("device") or reading.device or "IMAGE_SYMBOL")
+        package = str(state.get("package") or reading.package)
+        _work_dir(state).joinpath("image_reading.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {
+            "device": device, "package": package, "image_reading": payload,
+            "image_geometry": reading.geometry, "image_pin_count": reading.pin_count,
+            "merged_pins": _pins_to_dicts(reading.pins), "table_pins": [], "conflicts": [],
+            "human_package": {"action": "auto", "value": package, "source": "image"},
+            "device_candidates": [device], "package_candidates": [package] if package else [],
+            "review": {"mismatches": reading.questions, "missing": [], "extra": [],
+                       "source": "image_reading", "notes": str(payload.get("notes") or "")},
+            "warnings": [], "table_warnings": [], "status": "image_extracted",
+        }
+    except Exception as exc:
+        logger.error("symbol.image_extract.failed", exc_info=True)
+        return {"errors": _errors(state, f"图片引脚识别失败：{exc}"), "status": "failed"}
 
 
 @render_node
@@ -309,12 +374,18 @@ async def render_pages_node(state: dict[str, Any]) -> dict[str, Any]:
         pdf = state["pdf_path"]
         located = state.get("locate") or {}
         package = str(state.get("package") or "")
-        candidates = list((located.get("targets") or {}).get("pins") or [])
+        targets = located.get("targets") or {}
+        candidates = list(dict.fromkeys([*(targets.get("pins") or []), *(targets.get("package") or [])]))
         try:
             ranked = await _figure_pages(pdf, candidates, package) or candidates
         except Exception:
             ranked = candidates
         wanted = list(dict.fromkeys(ranked))[:MAX_FIGURE_PAGES] or [state.get("pin_page") or 1]
+        # The independent review needs the original name table when mechanical
+        # outlines label only numbers. Keep it as support, after the physical view.
+        table_page = state.get("pin_page")
+        if table_page and table_page not in wanted:
+            wanted = [*wanted[:MAX_FIGURE_PAGES - 1], table_page]
 
         out_dir = _work_dir(state) / "pages"
         rendered = []
@@ -354,12 +425,13 @@ async def vision_extract_node(state: dict[str, Any]) -> dict[str, Any]:
 
         payload = await _ask_vision(
             [item["path"] for item in pages],
-            _REVIEW_PROMPT.format(page=pages[0]["page"], device=device or "（未指定）"),
+            _REVIEW_PROMPT.format(page=pages[0]["page"], device=device or "（未指定）", package=state.get("package") or "未指定"),
         )
-        figure = FigureInfo.from_vision(payload, page=int(pages[0]["page"]))
+        figure = canonical_dual_row(FigureInfo.from_vision(payload, page=int(pages[0]["page"])), state.get("package") or "")
         return {
             "figure_sides": {side: list(nums) for side, nums in figure.pin_sides.items()},
             "figure_page": figure.page,
+            "warnings": _warnings(state, *figure.warnings),
             "status": "figure_extracted",
         }
     except Exception as exc:
@@ -394,8 +466,8 @@ async def merge_channels_node(state: dict[str, Any]) -> dict[str, Any]:
 
 
 @network_node
-def _review(image_path: str, device: str, pins: list[Pin], page: int):
-    return review_pins(VisionClient(), image_path, device=device, pins=pins, page=page)
+def _review(image_path: str, device: str, pins: list[Pin], page: int, **kwargs):
+    return review_pins(VisionClient(), image_path, device=device, pins=pins, page=page, **kwargs)
 
 
 async def review_pins_node(state: dict[str, Any]) -> dict[str, Any]:
@@ -414,6 +486,8 @@ async def review_pins_node(state: dict[str, Any]) -> dict[str, Any]:
             str(state.get("device") or ""),
             pins,
             int(pages[0]["page"]),
+            package=state.get("package") or "",
+            support_image_paths=[item["path"] for item in pages[1:] if item["page"] == state.get("pin_page")],
         )
         return {
             "review": {
@@ -422,6 +496,12 @@ async def review_pins_node(state: dict[str, Any]) -> dict[str, Any]:
                 "missing": list(result.missing),
                 "extra": list(result.extra),
                 "notes": result.notes,
+                "observations": [
+                    {key: item[key] for key in ("pin_number", "name", "side", "confidence", "uncertain")
+                     if key in item}
+                    for item in ((getattr(result, "raw", {}) or {}).get("pins") or [])
+                    if isinstance(item, dict)
+                ],
             },
             "status": "reviewed",
         }
@@ -497,6 +577,25 @@ async def self_check_node(state: dict[str, Any]) -> dict[str, Any]:
             sides_evaluated=True,
             pdf_stem=Path(state.get("pdf_path") or "").stem,
         )
+        expected_image_count = state.get("image_pin_count")
+        if state.get("input_kind") == "image" and expected_image_count is not None and len(pins) != expected_image_count:
+            report.findings.append(Finding(
+                code="image_pin_count_mismatch", severity="error",
+                title=f"图中标注 {expected_image_count} 个引脚，实际读取 {len(pins)} 个",
+                hint="请上传包含全部引脚的清晰图片。"))
+        automatic = list(raw_review.get("auto_resolutions") or [])
+        layout_decisions = [c for c in state.get("conflicts") or [] if c.get("resolution_source") == "layout_rule"]
+        if automatic:
+            report.findings.append(Finding(
+                code="review_auto_resolved", severity="info",
+                title=f"已自动核对 {len(automatic)} 处名称差异，无需人工确认",
+                detail="；".join(f"{r['pin_number']}: {r.get('expected')} → {r['value']}（{r['reason']}）"
+                                for r in automatic)))
+        if layout_decisions:
+            report.findings.append(Finding(
+                code="exposed_pad_layout", severity="info",
+                title="裸露焊盘已按布局规则放在符号底部",
+                detail="、".join(c["pin_number"] for c in layout_decisions)))
         payload = report.to_dict()
         # 人工已回答过的问题不再重复问。
         answered = dict((state.get("check_report") or {}).get("answered") or {})
@@ -534,7 +633,11 @@ async def build_layout_node(state: dict[str, Any]) -> dict[str, Any]:
     try:
         pins = _dicts_to_pins(state.get("merged_pins"))
         copies = [Pin(**{**asdict(pin)}) for pin in pins]  # 深拷一层，护住原始侧别
-        layout = build_layout(copies, part_name=str(state.get("device") or ""))
+        if state.get("input_kind") == "image":
+            from backend.agents.symbol.contracts.image_symbol import build_image_layout
+            layout = build_image_layout(copies, state["image_geometry"], str(state.get("device") or ""))
+        else:
+            layout = build_layout(copies, part_name=str(state.get("device") or ""))
         return {
             "layout": {
                 "part_name": layout.part_name,
@@ -553,8 +656,7 @@ async def build_layout_node(state: dict[str, Any]) -> dict[str, Any]:
         return {"errors": _errors(state, f"几何计算失败：{exc}"), "status": "failed"}
 
 
-@capture_node
-def _run_capture(layout_payload: dict, out_dir: str):
+def _capture_sync(layout_payload: dict, out_dir: str, execution_mode: str | None = None):
     from backend.agents.symbol.contracts.layout import PlacedPin, SymbolLayout
 
     layout = SymbolLayout(
@@ -565,7 +667,16 @@ def _run_capture(layout_payload: dict, out_dir: str):
         half_height=layout_payload["half_height"],
         warnings=list(layout_payload.get("warnings") or []),
     )
-    return capture_generate(layout, out_dir=Path(out_dir))
+    if execution_mode is None:
+        return capture_generate(layout, out_dir=Path(out_dir))
+    return capture_generate(layout, out_dir=Path(out_dir), execution_mode=execution_mode)
+
+
+async def _run_capture(layout_payload: dict, out_dir: str, execution_mode: str | None = None,
+                       drawing_id: str = "", tenant_id: str = ""):
+    mode = resolve_mode("symbol", execution_mode)
+    return await cadence_scheduler.run(_capture_sync, layout_payload, out_dir, execution_mode,
+                                       mode=mode, kind="symbol", drawing_id=drawing_id, tenant_id=tenant_id)
 
 
 async def generate_capture_node(state: dict[str, Any]) -> dict[str, Any]:
@@ -579,7 +690,16 @@ async def generate_capture_node(state: dict[str, Any]) -> dict[str, Any]:
         if not layout_payload:
             raise ValueError("还没有算好的布局")
         out_dir = Path(state.get("output_dir") or (_work_dir(state) / "artifacts"))
-        result = await _run_capture(layout_payload, str(out_dir))
+        if state.get("execution_mode"):
+            result = await _run_capture(layout_payload, str(out_dir), state["execution_mode"],
+                                        state.get("drawing_id", ""), state.get("tenant_id", ""))
+        else:
+            result = await _run_capture(layout_payload, str(out_dir))
+        artifacts = {"tcl": str(result.script)}
+        if getattr(result, "log_path", None):
+            artifacts["capture_log"] = str(result.log_path)
+        if result.passed:
+            artifacts.update(olb=str(result.olb), dsn=str(result.dsn))
         return {
             "capture": {
                 "passed": result.passed,
@@ -587,13 +707,16 @@ async def generate_capture_node(state: dict[str, Any]) -> dict[str, Any]:
                 "dsn": str(result.dsn),
                 "script": str(result.script),
                 "log_tail": result.log[-2000:],
+                "execution": getattr(result, "execution", {}),
             },
+            "artifact_paths": artifacts,
+            "errors": state.get("errors", []) if result.passed else _errors(state, f"Capture 生成失败：{result.log[-2000:]}"),
             "status": "capture_ok" if result.passed else "capture_failed",
         }
     except CaptureToolchainUnavailable as exc:
         logger.warning("symbol.toolchain_missing", error=str(exc))
         return {
-            "capture": {"passed": False, "script": str(exc.script)},
+            "capture": {"passed": False, "script": str(exc.script), "log_tail": str(exc)},
             "artifact_paths": {"tcl": str(exc.script)},
             "errors": _errors(state, str(exc)), "status": "stopped_no_toolchain",
         }
@@ -607,7 +730,7 @@ async def finalize_node(state: dict[str, Any]) -> dict[str, Any]:
     layout = state.get("layout") or {}
     capture = state.get("capture") or {}
     report = state.get("check_report") or {}
-    artifacts = {
+    artifacts = state.get("artifact_paths") or {
         "tcl": capture.get("script", ""),
         "olb": capture.get("olb", ""),
         "dsn": capture.get("dsn", ""),
@@ -626,6 +749,7 @@ async def finalize_node(state: dict[str, Any]) -> dict[str, Any]:
             "score": report.get("score"),
             "confidence": report.get("confidence"),
             "artifacts": artifacts,
+            "capture_execution": capture.get("execution", {}),
             "warnings": [*(state.get("warnings") or []), *(state.get("table_warnings") or []), *layout.get("warnings", [])],
         },
     }
@@ -667,7 +791,8 @@ async def stopped_offline_node(state: dict[str, Any]) -> dict[str, Any]:
 
 async def stopped_no_toolchain_node(state: dict[str, Any]) -> dict[str, Any]:
     """没有 tclsh：TCL 已生成，等有 Cadence 的机器。"""
-    payload = _stop_result(state, "stopped_no_toolchain", "本机没有 tclsh.exe")
+    detail = (state.get("capture") or {}).get("log_tail", "请检查安装路径或 SSH 配置")
+    payload = _stop_result(state, "stopped_no_toolchain", f"Cadence 执行环境不可用：{detail}")
     artifacts = state.get("artifact_paths") or {}
     payload["artifact_paths"] = artifacts
     payload["result"]["artifacts"] = artifacts
@@ -731,7 +856,7 @@ def route_after_check_answer(state: dict[str, Any]) -> str:
     if _status(state) == "cancelled":
         return "cancelled"
     if _status(state) == "check_package_changed":
-        return "reextract"
+        return "image_reextract" if state.get("input_kind") == "image" else "reextract"
     # 回答过就回到自检重跑，让 apply_answer 的效果体现出来。
     return "recheck"
 

@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from html.parser import HTMLParser
 import re
 
-from backend.agents.symbol.contracts.models import Pin, Side
+from backend.agents.symbol.contracts.models import Evidence, Pin, Side
 
 #: 空占位符。**刻意不含 "nc"** —— NC 常是有编号的真实引脚。
 _SKIP_CELLS = {"", "-", "—", "–", "n/a", "na", "/", "\\"}
@@ -35,7 +35,7 @@ _PIN_NUM_RE = re.compile(r"^\d+$|^[A-Za-z]{1,3}\d{1,3}$")
 
 #: 表头关键词（小写）。任一中即认为该行是表头。
 _HEADER_KEYWORDS = (
-    "pin", "name", "symbol", "type", "description", "no.", "no ",
+    "pin", "name", "symbol", "mnemonic", "type", "description", "no.", "no ",
     "引脚", "名称", "编号", "类型", "描述", "功能",
 )
 
@@ -182,7 +182,16 @@ def _valid_pin_number(text: str) -> bool:
 
 
 def _is_number_cell(text: str) -> bool:
-    return (text or "").strip().isdigit()
+    numbers = _pin_numbers(text)
+    return bool(numbers) and all(number.isdigit() for number in numbers)
+
+
+def _pin_numbers(text: str) -> list[str]:
+    """Expand explicit comma lists only; reject the whole cell if any token is invalid."""
+    parts = [part.strip() for part in (text or "").split(",")]
+    if not parts or not all(_valid_pin_number(part) for part in parts):
+        return []
+    return list(dict.fromkeys(parts))
 
 
 # ── 规则 1：表头识别 ──────────────────────────────────────────────
@@ -212,7 +221,7 @@ def _split_header_and_data(rows: list[list[str]]) -> tuple[list[str], int]:
     if any(_looks_like_header(cell) for cell in rows[0]):
         header_rows = 1
         for index in range(1, len(rows)):
-            if any(_valid_pin_number(cell) for cell in rows[index]):
+            if any(_pin_numbers(cell) for cell in rows[index]):
                 break
             header_rows += 1
     headers: list[str] = []
@@ -261,6 +270,13 @@ def _number_columns(
 ) -> list[int]:
     """选引脚号列。三步优先级**不可换**（规则 2）。"""
     columns = len(headers)
+    # Model headings can label mnemonic columns, rather than number columns.
+    # A shared Pin No. column takes precedence over those model names.
+    explicit = [i for i, header in enumerate(headers)
+                if re.fullmatch(r"(?:pin(?:s)?(?:\s*(?:no\.?|number))?|引脚号|编号)",
+                                _norm(header.split("\n")[-1]))]
+    if len(explicit) == 1:
+        return explicit
 
     # ① 表头含目标名（封装代码或型号）
     if target:
@@ -275,9 +291,10 @@ def _number_columns(
         wanted_count = int(match.group(1))
         for column in range(columns):
             numbers = [
-                int(row[column])
+                int(number)
                 for row in data
                 if column < len(row) and _is_number_cell(row[column])
+                for number in _pin_numbers(row[column])
             ]
             if numbers and max(numbers) == wanted_count:
                 return [column]
@@ -311,14 +328,15 @@ def parse_table_html(html: str) -> list[list[str]]:
 
 
 def extract_pins_from_table(
-    html: str, *, page: int, device: str = ""
+    html: str, *, page: int, device: str = "", package: str = ""
 ) -> Extraction:
     """表格 HTML → 引脚清单。
 
     Args:
         html: MinerU 输出的 ``table_body``。
         page: 该表所在的页码（写进证据）。
-        device: 目标器件名或封装代码，用于挑列（``_number_columns`` 的 ① ②）。
+        device: 目标型号，也可传旧调用方使用的封装代码。
+        package: 封装列选择；型号单独用于选取名称列。
 
     Returns:
         引脚清单与降级说明。解析不出任何引脚时返回空 pins 并附 warning ——
@@ -333,22 +351,50 @@ def extract_pins_from_table(
     if not data:
         return Extraction(headers=headers, warnings=["表头之后没有数据行"])
 
-    number_columns = _number_columns(headers, data, device)
-    name_columns = _column_hits(headers, ("name", "symbol", "引脚名", "名称"))
+    number_columns = _number_columns(headers, data, package or device)
+    if package and device and not any(_norm(package) in _norm(h) for h in headers):
+        if any(_norm(device) in _norm(h) for h in headers):
+            number_columns = _number_columns(headers, data, device)
+    name_columns = [i for i in _column_hits(headers, ("name", "symbol", "mnemonic", "引脚名", "名称"))
+                    if i not in number_columns and not any(word in _norm(headers[i].split("\n")[-1])
+                                                          for word in ("type", "description"))]
+    # Full ordering codes (AD7682BCPZRL7) use the longest matching family heading.
+    family_columns = [i for i, h in enumerate(headers)
+                      if i in name_columns and any(
+                          len(token) >= 4 and re.search(r"[A-Za-z]", token) and re.search(r"\d", token)
+                          and device.upper().startswith(token.upper())
+                          for token in re.findall(r"[A-Za-z0-9]+", h.split("\n")[-1]))]
+    if family_columns:
+        name_columns = [max(family_columns, key=lambda i: len(headers[i].split("\n")[-1]))]
+    elif len(name_columns) > 1 and any("mnemonic" in _norm(headers[i]) for i in name_columns):
+        return Extraction(headers=headers, device_columns=number_columns,
+                          warnings=["多型号名称列无法匹配目标型号，请确认型号"])
     type_columns = _column_hits(headers, ("type", "类型"))
     description_columns = _column_hits(headers, ("description", "描述", "功能"))
 
     pins: list[Pin] = []
     warnings: list[str] = []
     seen: set[str] = set()
+    previous: list[Pin] = []
 
     for row in data:
-        number = ""
+        numbers: list[str] = []
         for column in number_columns:
-            if column < len(row) and _valid_pin_number(row[column]):
-                number = row[column].strip()
+            if column < len(row) and _pin_numbers(row[column]):
+                numbers = _pin_numbers(row[column])
                 break
-        if not number:
+        if not numbers:
+            # OCR may put a wrapped description on a row with empty number cells.
+            if previous and all(column >= len(row) or not row[column].strip() for column in number_columns):
+                description = _clean_description(_first_of(row, description_columns))
+                name = _first_of(row, name_columns)
+                if description:
+                    for pin in previous:
+                        pin.description = (pin.description + " " + description).strip()
+                        if name and pin.name == pin.pin_number:
+                            pin.name = name
+                    continue
+            previous = []
             # 有内容却给不出合法引脚号 —— 记一笔，不静默丢弃（规则 5）。
             filler = next(
                 (cell.strip() for cell in row if cell.strip() and not _is_skip(cell)),
@@ -359,23 +405,25 @@ def extract_pins_from_table(
                     f"第 {len(pins) + 1} 行「{filler}」给不出合法引脚号，已跳过"
                 )
             continue
-        if number in seen:
-            warnings.append(f"引脚 {number} 重复出现，已去重")
-            continue
-        seen.add(number)
-
-        name = _first_of(row, name_columns) or number
-        pin_type = _pin_type(_first_of(row, type_columns))
+        name = _first_of(row, name_columns)
+        pin_type = "PAS" if name.upper() == "NC" else _pin_type(_first_of(row, type_columns))
         description = _clean_description(_first_of(row, description_columns))
 
-        pins.append(
-            Pin(
+        previous = []
+        for number in numbers:
+            if number in seen:
+                warnings.append(f"引脚 {number} 重复出现，已去重")
+                continue
+            seen.add(number)
+            pin = Pin(
                 pin_number=number,
-                name=name,
+                name=name or number,
                 type=pin_type,
                 description=description,
+                evidence=[Evidence(page=page, source="text")],
             )
-        )
+            pins.append(pin)
+            previous.append(pin)
 
     if not pins:
         warnings.append("表里没有解析出任何合法引脚号")
@@ -403,10 +451,38 @@ def _pin_type(raw: str) -> str:
     （IN / OUT / IO / PAS）对齐。
     """
     text = (raw or "").lower()
-    if "i/o" in text or "input/output" in text or "bidir" in text:
+    if ("i/o" in text or "input/output" in text or "bidir" in text
+            or re.fullmatch(r"[i1l|]\s*/\s*[o0]", text.strip())):
         return "IO"
-    if "output" in text:
+    if "output" in text or text.strip() in {"do", "ao"}:
         return "OUT"
-    if "input" in text:
+    if "input" in text or text.strip() in {"di", "ai"}:
         return "IN"
     return "PAS"
+
+
+def canonical_dual_row(figure: FigureInfo, package: str) -> FigureInfo:
+    """Rotate a verified DFN dual bank into the library's left/right convention.
+
+    Only complete, opposing banks containing 1..N qualify. Electrical schematics,
+    missing pins and exposed-pad variants cannot supply this proof.
+    """
+    from .pkgname import pin_count_from_package
+    if not re.match(r"^(?:X|U|V)?DFN(?:[\s_-]|\d)", package, re.I):
+        return figure
+    count = pin_count_from_package(package)
+    if count is None or count % 2:
+        return figure
+    banks = {side: numbers for side, numbers in figure.pin_sides.items() if numbers}
+    if set(banks) not in ({"left", "right"}, {"top", "bottom"}):
+        return figure
+    flattened = [number for numbers in banks.values() for number in numbers]
+    if len(flattened) != count or set(flattened) != {str(n) for n in range(1, count + 1)}:
+        return figure
+    low = {str(n) for n in range(1, count // 2 + 1)}
+    if not any(set(numbers) == low for numbers in banks.values()):
+        return figure
+    return FigureInfo(pin_sides={"left": [str(n) for n in range(1, count // 2 + 1)],
+                                 "right": [str(n) for n in range(count, count // 2, -1)]},
+                      page=figure.page, raw=figure.raw,
+                      warnings=[*figure.warnings, "双排 DFN 封装图已转换为符号库的左右排列，保留编号与拓扑"])

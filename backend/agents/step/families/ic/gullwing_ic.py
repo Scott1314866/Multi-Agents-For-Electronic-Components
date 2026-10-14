@@ -1,9 +1,10 @@
-"""SOIC、TSSOP 等双侧对称鸥翼引脚器件族规划器。"""
+"""SOIC、TSSOP、SOT 等两侧鸥翼引脚器件族规划器。"""
 
 from __future__ import annotations
 
 import re
 from typing import Any, Iterable
+from backend.agents.step.features.gullwing_layout import ROW_PARAMETERS, ROW_WIDTH_PARAMETERS, ROW_LENGTH_PARAMETERS, ROW_THICKNESS_PARAMETERS, ROW_PROFILE_PARAMETERS, row_profile_values, row_positions, validate_row_envelopes, validate_profile_envelopes
 
 from backend.agents.step.drawing.gate import extraction_dimensions
 from backend.agents.step.ir.schemas import (
@@ -48,6 +49,9 @@ OPTIONAL_PARAMETERS: tuple[str, ...] = (
     "mold_draft_angle_top_deg",
     "mold_draft_angle_bottom_deg",
     "lead_angle_deg",
+    *ROW_PARAMETERS,
+    *ROW_WIDTH_PARAMETERS,
+    *ROW_PROFILE_PARAMETERS,
 )
 
 REQUIRED_FEATURES: tuple[str, ...] = (
@@ -59,7 +63,17 @@ REQUIRED_FEATURES: tuple[str, ...] = (
 PARAMETER_GUIDANCE: dict[str, str] = {
     "nominal_pin_count": "明确的 N PINS/N-Lead 总引脚数",
     "terminal_pitch": "相邻引脚中心间距或 boxed/basic pitch",
-    "pin_span": "同侧首末引脚中心跨距；缺失时可由数量和间距派生",
+    "pin_span": "两排中较大的首末引脚中心跨距；对称偶数布局缺失时可由数量和间距派生",
+    "negative_side_pin_count": "下侧引脚排的实际数量，沿 X 计数；奇数引脚必须核对两排，不能仅由总数猜测",
+    "positive_side_pin_count": "上侧引脚排的实际数量；两排数量之和必须等于总引脚数",
+    "negative_side_pin_span": "下侧同排首末引脚中心距（mm）；单脚排填 0，不是相邻间距",
+    "positive_side_pin_span": "上侧同排首末引脚中心距（mm）；单脚排填 0；两脚排可能跨两个基本间距",
+    "negative_side_terminal_width": "下侧每个金属引脚沿 X 的宽度（mm）；普通引脚与对侧宽端子分别引用尺寸符号，不能用高度 A",
+    "positive_side_terminal_width": "上侧每个金属引脚沿 X 的独立宽度（mm）；宽端子引用自己的宽度标注（如 D1），不能套普通引脚 b",
+    "negative_side_terminal_length": "下侧引脚脚底长度（mm），仅引用该侧脚长标注；两侧脚长不同应分别填写",
+    "positive_side_terminal_length": "上侧引脚脚底长度（mm），宽端子长度不能由另一侧普通引脚推断",
+    "negative_side_terminal_thickness": "下侧引脚金属厚度（mm），不是本体离板高度或共面度",
+    "positive_side_terminal_thickness": "上侧引脚金属厚度（mm），独立引用该侧板厚标注；宽端子可能使用独立尺寸",
     "total_height": "侧视图从 Seating Plane 到封装顶部的总体高度；无 NOM/TYP 时选明确 MAX 包络",
     "housing_height": "塑封本体高度；缺失时可由总体高度减离板高度派生",
     "body_standoff": "Seating Plane 到本体底面的距离；只有 MIN 时引用该明确值",
@@ -80,17 +94,21 @@ VIEW_PARAMETER_GROUPS: dict[str, tuple[str, ...]] = {
     "top": (
         "nominal_pin_count", "terminal_pitch", "pin_span",
         "overall_width", "body_width", "body_length",
+        *ROW_PARAMETERS,
+        *ROW_WIDTH_PARAMETERS,
     ),
     "front": (
         "nominal_pin_count", "total_height", "housing_height", "body_standoff",
         "terminal_pitch", "terminal_width", "terminal_thickness",
     ),
     "side": (
+        *ROW_PROFILE_PARAMETERS,
         "total_height", "housing_height", "body_standoff", "terminal_length",
         "terminal_thickness", "mold_draft_angle_top_deg",
         "mold_draft_angle_bottom_deg", "lead_angle_deg",
     ),
     "detail": (
+        *ROW_PROFILE_PARAMETERS,
         "terminal_length", "terminal_thickness", "terminal_width",
         "mold_draft_angle_top_deg", "mold_draft_angle_bottom_deg",
         "lead_angle_deg",
@@ -99,10 +117,32 @@ VIEW_PARAMETER_GROUPS: dict[str, tuple[str, ...]] = {
 
 _EXPECTED_UNITS: dict[str, str] = {
     "nominal_pin_count": "count",
+    "negative_side_pin_count": "count",
+    "positive_side_pin_count": "count",
     "mold_draft_angle_top_deg": "deg",
     "mold_draft_angle_bottom_deg": "deg",
     "lead_angle_deg": "deg",
 }
+
+
+def required_parameters(parameters: Iterable[FusedParameter], *, package_type: str = '') -> tuple[str, ...]:
+    indexed={p.canonical_name:p.value for p in parameters}
+    count=indexed.get('nominal_pin_count',0)
+    # SOT identity never proves two equal rows. Even four leads may be 3+1.
+    sot=bool(re.match(r'^SOT\b|^SOT\d',package_type.strip(),re.I))
+    explicit=any(name in indexed for name in (*ROW_PARAMETERS,*ROW_WIDTH_PARAMETERS,*ROW_PROFILE_PARAMETERS))
+    rows=sot or explicit or (count>=3 and float(count).is_integer() and int(count)%2)
+    widths=sot or any(name in indexed for name in (*ROW_WIDTH_PARAMETERS,*ROW_PROFILE_PARAMETERS))
+    profiles=tuple(name for pair in (ROW_LENGTH_PARAMETERS,ROW_THICKNESS_PARAMETERS)
+                   if any(name in indexed for name in pair) for name in pair)
+    return (*REQUIRED_PARAMETERS,*(ROW_PARAMETERS if rows else ()),*(ROW_WIDTH_PARAMETERS if widths else ()),*profiles)
+
+
+def layout_parameters(values: dict[str, float]) -> dict[str, float]:
+    return {'count':values['nominal_pin_count'],'pitch':values['terminal_pitch'],
+            'row_span':values['pin_span'],**{k:values[k] for k in (*ROW_PARAMETERS,*ROW_WIDTH_PARAMETERS) if k in values},
+            **({'lead_width':values['terminal_width']} if 'terminal_width' in values else {}),
+            **({'body_length':values['body_length']} if 'body_length' in values else {})}
 
 
 def _explicit_mold_angle_text(name: str, texts: Iterable[str]) -> bool:
@@ -841,11 +881,12 @@ def plan_from_evidence(
         raise ValueError("鸥翼封装 Feature IR 缺少源图片 SHA256")
 
     indexed = {parameter.canonical_name: parameter for parameter in fused.parameters}
-    missing = [name for name in REQUIRED_PARAMETERS if name not in indexed]
+    required = required_parameters(fused.parameters,package_type=fused.package_type)
+    missing = [name for name in required if name not in indexed]
     if missing:
         raise ValueError(f"鸥翼封装 Feature IR 缺少关键参数：{missing}")
 
-    for name in REQUIRED_PARAMETERS:
+    for name in required:
         parameter = indexed[name]
         if not parameter_has_traceable_source(parameter):
             raise ValueError(f"鸥翼封装参数缺少可追溯证据：{name}")
@@ -863,8 +904,12 @@ def plan_from_evidence(
 
     count_value = indexed["nominal_pin_count"].value
     count = int(round(count_value))
-    if count < 4 or count % 2 or abs(count_value - count) > 1e-9:
-        raise ValueError("双侧对称鸥翼封装引脚数量必须是大于等于 4 的偶数")
+    if count < 3 or abs(count_value - count) > 1e-9:
+        raise ValueError("两侧鸥翼封装引脚数量必须是大于等于 3 的整数")
+    profile_values={name:p.value for name,p in indexed.items()}
+    validate_profile_envelopes(profile_values)
+    row_positions(layout_parameters(profile_values))
+    validate_row_envelopes(layout_parameters({name:p.value for name,p in indexed.items()}))
 
     positive_dimensions = (
         "terminal_pitch",
@@ -912,6 +957,8 @@ def plan_from_evidence(
         "standoff": source("body_standoff"),
     }
     assumptions = []
+    if any(name in indexed for name in ROW_PARAMETERS):
+        assumptions.append('两排按各自首末中心跨度居中等距排列；偏置或非等距排列需人工复核。')
     if has_explicit_draft:
         body_parameters.update({
             "draft_top_deg": source("mold_draft_angle_top_deg"),
@@ -919,6 +966,10 @@ def plan_from_evidence(
         })
     else:
         assumptions.append("未标注完整塑封拔模细节，输出本体包络，需人工审核。")
+    if not all(name in indexed for name in ROW_LENGTH_PARAMETERS):
+        assumptions.append("上下侧脚底长度采用已确认的默认尺寸；未分别核对，两侧细节需复核。")
+    if not all(name in indexed for name in ROW_THICKNESS_PARAMETERS):
+        assumptions.append("上下侧金属厚度采用已确认的默认尺寸；未分别核对，两侧细节需复核。")
     if "lead_angle_deg" in valid_optional:
         assumptions.append("引脚倾角仅保留为审计证据，未用作塑封拔模参数。")
     body = EvidenceCADFeature(
@@ -940,6 +991,9 @@ def plan_from_evidence(
             "lead_thickness": source("terminal_thickness"),
             "body_standoff": source("body_standoff"),
             "body_height": source("housing_height"),
+            **{name:source(name) for name in ROW_PARAMETERS if name in indexed},
+            **{name:source(name) for name in ROW_WIDTH_PARAMETERS if name in indexed},
+            **{name:source(name) for name in ROW_PROFILE_PARAMETERS if name in indexed},
         },
     )
 
@@ -973,7 +1027,7 @@ def plan_from_evidence(
         features=[body, leads],
         expected_geometry=expected_geometry,
         source_dimensions={
-            name: source(name) for name in (*REQUIRED_PARAMETERS, *valid_optional)
+            name: source(name) for name in (*required, *valid_optional)
         },
         assumptions=assumptions,
     ).model_dump()
@@ -1009,6 +1063,9 @@ def plan(case: dict[str, Any], extraction: dict[str, Any]) -> dict[str, Any]:
             "lead_thickness": values["terminal_thickness"],
             "body_standoff": values["body_standoff"],
             "body_height": values["housing_height"],
+            **{name:values[name] for name in ROW_PARAMETERS if name in values},
+            **{name:values[name] for name in ROW_WIDTH_PARAMETERS if name in values},
+            **{name:values[name] for name in ROW_PROFILE_PARAMETERS if name in values},
         },
     )
     expected = {

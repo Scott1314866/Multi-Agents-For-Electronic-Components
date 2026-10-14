@@ -285,7 +285,7 @@ def test_conflict_resolution_cannot_invent_entries():
 
 
 def test_symbol_routes_are_registered():
-    from backend.step_main import app
+    from backend.main import app
 
     paths = app.openapi()["paths"]
     for path in (

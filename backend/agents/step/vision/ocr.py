@@ -3,6 +3,14 @@
 from __future__ import annotations
 
 import re
+import os
+import sys
+import hashlib
+import json
+import tempfile
+import sysconfig
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, TimeoutError as FutureTimeoutError
 from functools import lru_cache
 from threading import Lock
 from pathlib import Path
@@ -15,6 +23,7 @@ import numpy as np
 from backend.agents.step.vision.schemas import OCRToken, ParsedDimension, ViewRegion
 from backend.agents.step.vision.view_splitter import region_for_bbox
 from backend.core.logger import get_logger
+from backend.config import get_settings
 
 
 logger = get_logger(__name__)
@@ -272,6 +281,117 @@ def _run_engine(engine: Any, image: np.ndarray) -> list[tuple[list[list[float]],
     return _extract_prediction_items(engine.ocr(image, cls=True))
 
 
+@lru_cache(maxsize=1)
+def _ocr_process_executor() -> ProcessPoolExecutor:
+    # Windows uses spawn. Keep the engine warm in one child and send only
+    # image arrays and normalized OCR results across the process boundary.
+    return ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+
+
+def _prediction_cache_path(image: np.ndarray, settings: Any) -> Path | None:
+    if not getattr(settings, "step_ocr_cache_dir", ""):
+        return None
+    models = _model_cache_root(settings) / "official_models"
+    runtime = Path(settings.step_ocr_runtime_dir) if settings.step_ocr_runtime_dir else Path(sysconfig.get_path("purelib"))
+    files = [models / name / filename
+             for name in (settings.step_ocr_detection_model, settings.step_ocr_recognition_model)
+             for filename in ("inference.json", "inference.pdiparams", "inference.yml")]
+    files.extend((runtime / "paddle" / "base").glob("libpaddle.*"))
+    signature = {"schema": 1, "shape": list(image.shape), "dtype": str(image.dtype),
+                 "models": [settings.step_ocr_detection_model, settings.step_ocr_recognition_model],
+                 "mkldnn": settings.step_ocr_enable_mkldnn, "threads": settings.step_ocr_cpu_threads,
+                 "runtime": str(runtime.resolve()),
+                 "files": [(str(p), p.stat().st_size, p.stat().st_mtime_ns) for p in files if p.is_file()]}
+    digest = hashlib.sha256(json.dumps(signature, sort_keys=True).encode())
+    digest.update(np.ascontiguousarray(image).tobytes())
+    return Path(settings.step_ocr_cache_dir).resolve() / (digest.hexdigest() + ".json")
+
+
+def _cached_predictions(image: np.ndarray, settings: Any) -> list[tuple[list[list[float]], str, float]] | None:
+    cache = _prediction_cache_path(image, settings)
+    if cache and cache.is_file():
+        try:
+            data = json.loads(cache.read_text(encoding="utf-8"))
+            items = data["items"]
+            if data.get("schema") != 1 or not isinstance(items, list):
+                raise ValueError("Invalid OCR cache schema")
+            for polygon, text, confidence in items:
+                points = np.asarray(polygon, dtype=float)
+                if points.ndim != 2 or points.shape[1] != 2 or len(points) < 3 or not np.isfinite(points).all() or not isinstance(text, str) or not 0 <= float(confidence) <= 1:
+                    raise ValueError("Invalid OCR cache evidence")
+            logger.info("ocr.prediction_cache_hit", items=len(items))
+            return [(polygon, text, float(confidence)) for polygon, text, confidence in items]
+        except (OSError, ValueError, KeyError, TypeError):
+            logger.warning("ocr.prediction_cache_invalid")
+    return None
+
+
+def _warmup_in_process() -> None:
+    # Bypass persistent prediction caching: a cached blank image cannot warm a
+    # newly spawned native engine. Keep weights and first predictor setup out of
+    # the per-image scan deadline.
+    started = perf_counter()
+    logger.info("ocr.warmup_started", pid=os.getpid())
+    _run_engine(create_paddle_engine(), np.full((128,128,3),255,dtype=np.uint8))
+    logger.info("ocr.warmup_ready", pid=os.getpid(), elapsed_ms=round((perf_counter()-started)*1000,2))
+
+
+def _ensure_ocr_ready(executor: ProcessPoolExecutor, settings: Any) -> None:
+    if getattr(executor, "_ocr_warmup_done", False):
+        return
+    timeout = getattr(settings, "step_ocr_startup_timeout", 300)
+    try:
+        executor.submit(_warmup_in_process).result(timeout=timeout)
+    except FutureTimeoutError:
+        _reset_ocr_process(executor)
+        raise RuntimeError(f"OCR 初始化超过 {timeout:g} 秒，已重置识别进程。请检查本地模型与 OCR 运行库。") from None
+    executor._ocr_warmup_done = True
+
+
+def _predict_in_process(image: np.ndarray) -> list[tuple[list[list[float]], str, float]]:
+    settings = get_settings()
+    cached = _cached_predictions(image, settings)
+    if cached is not None:
+        return cached
+    cache = _prediction_cache_path(image, settings)
+    engine = create_paddle_engine()
+    started = perf_counter()
+    logger.info("ocr.prediction_started", shape=list(image.shape), pid=os.getpid())
+    items = _run_engine(engine, image)
+    logger.info("ocr.prediction_completed", elapsed_ms=round((perf_counter()-started)*1000,2), items=len(items))
+    if cache:
+        temporary = None
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=cache.parent, delete=False) as stream:
+                temporary = Path(stream.name)
+                json.dump({"schema": 1, "items": items}, stream, ensure_ascii=False)
+            os.replace(temporary, cache)
+        except OSError:
+            logger.warning("ocr.prediction_cache_write_failed")
+        finally:
+            if temporary and temporary.exists():
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("ocr.prediction_cache_cleanup_failed")
+    return items
+
+
+def _reset_ocr_process(executor: ProcessPoolExecutor) -> None:
+    # Python 3.12 has no terminate_workers(). These are exclusively the children
+    # created by our executor; a timed-out native call must not block later jobs.
+    for process in list((getattr(executor, "_processes", None) or {}).values()):
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=2)
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=2)
+    executor.shutdown(wait=False, cancel_futures=True)
+    _ocr_process_executor.cache_clear()
+
+
 def _restore_point(
     point: tuple[float, float], rotation_deg: int, original_width: int, original_height: int
 ) -> tuple[float, float]:
@@ -303,9 +423,51 @@ def _iou(first: tuple[int, int, int, int], second: tuple[int, int, int, int]) ->
     return intersection / float(area_first + area_second - intersection)
 
 
+def _model_cache_root(settings: Any) -> Path:
+    explicit = getattr(settings, "step_ocr_model_dir", "") or os.environ.get("PADDLE_PDX_CACHE_HOME")
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    bundled = Path(__file__).resolve().parents[4] / "models" / "paddlex"
+    return bundled if (bundled / "official_models").is_dir() else Path.home() / ".paddlex"
+
+
 @lru_cache(maxsize=1)
 def create_paddle_engine() -> Any:
-    """延迟创建 PP-OCRv6 medium CPU 引擎，避免单元测试强制加载模型。"""
+    """Create a warm CPU engine; optional runtime overrides stay in the OCR child."""
+    settings = get_settings()
+    cache_root = _model_cache_root(settings)
+    model_dirs = [cache_root / "official_models" / name for name in
+                  (settings.step_ocr_detection_model, settings.step_ocr_recognition_model)]
+    local_models = all((directory / "inference.pdiparams").is_file() and
+                       (directory / "inference.yml").is_file() for directory in model_dirs)
+    if getattr(settings, "step_ocr_model_dir", "") and not local_models:
+        raise RuntimeError("OCR 本地模型不完整，请检查 STEP_OCR_MODEL_DIR 中的检测及识别权重")
+    os.environ["PADDLE_PDX_CACHE_HOME"] = str(cache_root)
+    if local_models:
+        # Set before importing PaddleOCR: its import-time availability probe may
+        # otherwise wait on remote model hosts even though weights are bundled.
+        os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
+    started = perf_counter()
+    logger.info("ocr.engine_loading", pid=os.getpid(), local_models=local_models,
+                cache_root=str(cache_root), detection_model=settings.step_ocr_detection_model,
+                recognition_model=settings.step_ocr_recognition_model)
+    runtime = settings.step_ocr_runtime_dir
+    if runtime:
+        if not settings.step_ocr_isolate_process:
+            raise RuntimeError("独立 OCR 运行库需要启用 STEP_OCR_ISOLATE_PROCESS")
+        directory = Path(runtime).resolve()
+        if not (directory / "paddle" / "__init__.py").is_file():
+            raise RuntimeError("OCR 运行库目录中缺少 Paddle，请检查 STEP_OCR_RUNTIME_DIR")
+        loaded = getattr(sys.modules.get("paddle"), "__file__", None)
+        if loaded and not Path(loaded).resolve().is_relative_to(directory):
+            raise RuntimeError("OCR 进程已加载其他 Paddle 版本，请重启服务后重试")
+        if str(directory) not in sys.path:
+            sys.path.insert(0, str(directory))
+    threads = settings.step_ocr_cpu_threads
+    for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+        os.environ[name] = str(threads)
+    os.environ["KMP_BLOCKTIME"] = "0"
+    os.environ["OMP_WAIT_POLICY"] = "PASSIVE"
     try:
         from paddleocr import PaddleOCR
     except ImportError as exc:
@@ -313,18 +475,24 @@ def create_paddle_engine() -> Any:
             "缺少 PaddleOCR：请在 ima-agent 环境安装 paddleocr 与 paddlepaddle。"
         ) from exc
     try:
-        return PaddleOCR(
-            text_detection_model_name="PP-OCRv6_medium_det",
-            text_recognition_model_name="PP-OCRv6_medium_rec",
+        engine = PaddleOCR(
+            text_detection_model_name=settings.step_ocr_detection_model,
+            text_recognition_model_name=settings.step_ocr_recognition_model,
             device="cpu",
-            enable_mkldnn=False,
+            engine="paddle_static",
+            engine_config={"run_mode": "mkldnn" if settings.step_ocr_enable_mkldnn else "paddle",
+                           "cpu_threads": threads},
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
             use_textline_orientation=False,
+            **({"text_detection_model_dir": str(model_dirs[0]),
+                "text_recognition_model_dir": str(model_dirs[1])} if local_models else {}),
         )
+        logger.info("ocr.engine_ready", pid=os.getpid(), elapsed_ms=round((perf_counter()-started)*1000,2))
+        return engine
     except TypeError as exc:
         raise RuntimeError(
-            "当前 PaddleOCR 不支持 PP-OCRv6 medium；请在 ima-agent 环境使用支持该模型的 PaddleOCR 3.x。"
+            "当前 PaddleOCR 不支持配置的模型或运行引擎；请检查 PaddleOCR 版本与 OCR 配置。"
         ) from exc
 
 
@@ -351,10 +519,11 @@ def extract_ocr_tokens(
         raise ValueError(f"无法读取 OCR 图片：{gray_path}")
     height, width = image.shape
     paddle_image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-    # The vision executor has one worker; keep the model warm across uploads.
+    # Reuse the engine across uploads, either in the vision thread or its child.
     # The lock also protects shared inference for callers outside that executor.
     shared_engine = engine is None
-    if shared_engine:
+    isolated = shared_engine and get_settings().step_ocr_isolate_process
+    if shared_engine and not isolated:
         with _ENGINE_LOCK:
             engine = create_paddle_engine()
     candidates: list[OCRToken] = []
@@ -366,9 +535,24 @@ def extract_ocr_tokens(
         else:
             target = paddle_image
         started_at = perf_counter()
+        logger.info("ocr.scan_started", source=str(gray_path), rotation_deg=rotation,
+                    shape=list(target.shape), isolated=isolated)
         if shared_engine:
             with _ENGINE_LOCK:
-                predictions = _run_engine(engine, target)
+                if isolated:
+                    settings = get_settings()
+                    predictions = _cached_predictions(target, settings)
+                    if predictions is None:
+                        executor = _ocr_process_executor()
+                        _ensure_ocr_ready(executor, settings)
+                        timeout = settings.step_ocr_scan_timeout
+                        try:
+                            predictions = executor.submit(_predict_in_process, target).result(timeout=timeout)
+                        except FutureTimeoutError:
+                            _reset_ocr_process(executor)
+                            raise RuntimeError(f"OCR 单轮识别超过 {timeout:g} 秒，已重置识别进程。请重试任务或检查 OCR 运行配置。") from None
+                else:
+                    predictions = _run_engine(engine, target)
         else:
             predictions = _run_engine(engine, target)
         scan_items: list[dict[str, Any]] = []

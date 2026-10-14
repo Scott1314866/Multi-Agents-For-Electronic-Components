@@ -64,6 +64,8 @@ class PinRecord:
     bbox: BBox | None = None
     padstack: str | None = None
     rotation: float | None = None
+    shape: str | None = None
+    copper_bbox: BBox | None = None
 
 
 @dataclass(frozen=True)
@@ -245,6 +247,8 @@ def parse_verify_log(text: str) -> VerifyLog:
                     if "padstack=" in stripped
                     else None,
                     bbox=parse_bbox(stripped),
+                    shape=_quoted(stripped.split("shape=", 1)[1]) if "shape=" in stripped else None,
+                    copper_bbox=parse_bbox(stripped.split("copper_bbox=", 1)[1]) if "copper_bbox=" in stripped else None,
                 )
             )
         elif stripped.startswith("object_count="):

@@ -2,6 +2,7 @@
 tmp/
 sample/
 .firecrawl/
+.cache/
 
 # Python
 __pycache__/
@@ -20,9 +21,13 @@ venv/
 
 # Generated outputs
 output/
+node_modules/
+frontend/playwright-report/
+frontend/test-results/
 
 # Logs
 *.log
+!tests/golden/pcb/pcmf3usb3b/*.log
 
 # OS
 .DS_Store

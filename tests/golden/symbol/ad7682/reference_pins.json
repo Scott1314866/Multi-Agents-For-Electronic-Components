@@ -1,0 +1,128 @@
+[
+  {
+    "pin_number": "1",
+    "name": "VDD",
+    "side": "left",
+    "side_order": 0
+  },
+  {
+    "pin_number": "2",
+    "name": "REF",
+    "side": "left",
+    "side_order": 1
+  },
+  {
+    "pin_number": "3",
+    "name": "REFIN",
+    "side": "left",
+    "side_order": 2
+  },
+  {
+    "pin_number": "4",
+    "name": "GND",
+    "side": "left",
+    "side_order": 3
+  },
+  {
+    "pin_number": "5",
+    "name": "GND",
+    "side": "left",
+    "side_order": 4
+  },
+  {
+    "pin_number": "6",
+    "name": "NC",
+    "side": "left",
+    "side_order": 5
+  },
+  {
+    "pin_number": "7",
+    "name": "IN2",
+    "side": "left",
+    "side_order": 6
+  },
+  {
+    "pin_number": "8",
+    "name": "NC",
+    "side": "left",
+    "side_order": 7
+  },
+  {
+    "pin_number": "9",
+    "name": "IN3",
+    "side": "left",
+    "side_order": 8
+  },
+  {
+    "pin_number": "10",
+    "name": "COM",
+    "side": "left",
+    "side_order": 9
+  },
+  {
+    "pin_number": "11",
+    "name": "CNV",
+    "side": "right",
+    "side_order": 10
+  },
+  {
+    "pin_number": "12",
+    "name": "DIN",
+    "side": "right",
+    "side_order": 9
+  },
+  {
+    "pin_number": "13",
+    "name": "SCK",
+    "side": "right",
+    "side_order": 8
+  },
+  {
+    "pin_number": "14",
+    "name": "SDO",
+    "side": "right",
+    "side_order": 7
+  },
+  {
+    "pin_number": "15",
+    "name": "VIO",
+    "side": "right",
+    "side_order": 6
+  },
+  {
+    "pin_number": "16",
+    "name": "IN0",
+    "side": "right",
+    "side_order": 5
+  },
+  {
+    "pin_number": "17",
+    "name": "NC",
+    "side": "right",
+    "side_order": 4
+  },
+  {
+    "pin_number": "18",
+    "name": "IN1",
+    "side": "right",
+    "side_order": 3
+  },
+  {
+    "pin_number": "19",
+    "name": "NC",
+    "side": "right",
+    "side_order": 2
+  },
+  {
+    "pin_number": "20",
+    "name": "VDD",
+    "side": "right",
+    "side_order": 1
+  },
+  {
+    "pin_number": "21",
+    "name": "EP",
+    "side": "right",
+    "side_order": 0
+  }
+]

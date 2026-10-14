@@ -1,4 +1,4 @@
-"""Backend entrypoint checks without starting a server or connecting to a DB."""
+"""Unified backend entrypoint checks without binding ports or connecting to a DB."""
 
 from __future__ import annotations
 
@@ -15,36 +15,30 @@ import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-ENTRYPOINTS = ("backend.main", "backend.new_main", "backend.step_main")
 
 
-def test_entrypoints_import_in_a_fresh_process_and_share_one_app():
+def test_main_import_in_a_fresh_process_does_not_start_services():
     # Importing the ASGI app must not start lifespan/migrations, models, or a server.
     result = subprocess.run(
-        [sys.executable, "-c", (
-            "import backend.main as standard; import backend.new_main as legacy; "
-            "import backend.step_main as step; "
-            "assert standard.app is legacy.app is step.app; "
-            "assert standard.lifespan is legacy.lifespan is step.lifespan; "
-            "assert standard.run_server is legacy.run_server is step.run_server"
+        [sys.executable, "-s", "-c", (
+            "import sys; import backend.main as main; "
+            "assert callable(main.app.router.lifespan_context); "
+            "assert callable(main.lifespan); "
+            "assert callable(main.run_server); "
+            "assert not any(name in sys.modules for name in ('cadquery', 'paddle', 'paddleocr'))"
         )],
         cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=30,
     )
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("module_name", ENTRYPOINTS)
-def test_entrypoint_routes_contain_only_implemented_apis(module_name):
+def test_main_routes_contain_only_implemented_apis():
     """只挂已实现的接口 —— 别让 exam / interview / qa 的残骸复活。
 
     pcb（PCB 封装生成）与 symbol（OrCAD 符号生成）现已实现，因此列入允许
     前缀；而 resume / interview / exam / qa 仍然是被删掉的残骸模块。
     """
-    module = importlib.import_module(module_name)
-    canonical = importlib.import_module("backend.step_main")
-    assert module.app is canonical.app
-    assert module.lifespan is canonical.lifespan
-    assert module.app.router.lifespan_context is canonical.app.router.lifespan_context
+    module = importlib.import_module("backend.main")
     paths = set(module.app.openapi()["paths"])
     assert "/health" in paths
     assert "/api/v1/auth/login" in paths
@@ -56,7 +50,7 @@ def test_entrypoint_routes_contain_only_implemented_apis(module_name):
     assert all(
         path == "/health"
         or path.startswith(
-            ("/api/v1/auth/", "/api/v1/step/", "/api/v1/pcb/", "/api/v1/symbol/")
+            ("/api/v1/auth/", "/api/v1/step/", "/api/v1/pcb/", "/api/v1/symbol/", "/api/v1/workbench/")
         )
         for path in paths
     )
@@ -66,9 +60,9 @@ def test_entrypoint_routes_contain_only_implemented_apis(module_name):
     )
 
 
-def test_router_catalog_matches_the_shared_application():
+def test_router_catalog_matches_the_main_application():
     router = importlib.import_module("backend.api.router").api_router
-    canonical = importlib.import_module("backend.step_main")
+    canonical = importlib.import_module("backend.main")
     catalog_app = FastAPI()
     catalog_app.include_router(router, prefix="/api/v1")
     router_routes = {
@@ -85,44 +79,64 @@ def test_router_catalog_matches_the_shared_application():
     assert router_routes == app_routes
 
 
-def test_shared_app_lifespan_runs_migrations_and_recovery_once(monkeypatch):
-    canonical = importlib.import_module("backend.step_main")
+def test_main_lifespan_runs_migrations_and_recovery_once(monkeypatch):
+    canonical = importlib.import_module("backend.main")
     events = []
 
     async def migrate():
         events.append("migrate")
 
     async def recover():
-        events.append("recover")
+        events.append("recover_step")
+
+    async def recover_pcb():
+        events.append("recover_pcb")
+
+    async def recover_symbol():
+        events.append("recover_symbol")
 
     monkeypatch.setattr(canonical, "run_migrations", migrate)
     monkeypatch.setattr(canonical.step, "recover_step_jobs", recover)
+    monkeypatch.setattr(canonical.pcb, "recover_pcb_jobs", recover_pcb)
+    monkeypatch.setattr(canonical.symbol, "recover_symbol_jobs", recover_symbol)
     monkeypatch.setattr(canonical.step, "_background_tasks", set())
+    monkeypatch.setattr(canonical.pcb, "_background_tasks", set())
+    monkeypatch.setattr(canonical.symbol, "_background_tasks", set())
 
     async def enter():
         async with canonical.app.router.lifespan_context(canonical.app):
             events.append("running")
 
     asyncio.run(enter())
-    assert events == ["migrate", "recover", "running"]
+    assert events == ["migrate", "recover_step", "recover_pcb", "recover_symbol", "running"]
 
 
-@pytest.mark.parametrize("module_name", ["backend.main", "backend.new_main"])
-def test_compatibility_module_main_calls_shared_startup(monkeypatch, module_name):
-    canonical = importlib.import_module("backend.step_main")
-    calls = []
-    monkeypatch.setattr(canonical, "run_server", lambda: calls.append("started"))
-    path = PROJECT_ROOT.joinpath(*module_name.split(".")).with_suffix(".py")
-    namespace = runpy.run_path(str(path), run_name="__main__")
-    assert calls == ["started"]
-    assert namespace["app"] is canonical.app
+def test_main_module_execution_launches_its_application(monkeypatch):
+    import uvicorn
+
+    configs = []
+
+    class Server:
+        def __init__(self, config):
+            self.config = config
+
+        async def serve(self):
+            configs.append(self.config)
+
+        def run(self):
+            configs.append(self.config)
+
+    monkeypatch.setattr(uvicorn, "Server", Server)
+    namespace = runpy.run_path(str(PROJECT_ROOT / "backend" / "main.py"), run_name="__main__")
+    assert len(configs) == 1
+    assert configs[0].app is namespace["app"]
 
 
 @pytest.mark.parametrize("platform", ["win32", "linux"])
-def test_shared_startup_preserves_selector_and_uvicorn_configuration(monkeypatch, platform):
+def test_main_startup_preserves_selector_and_uvicorn_configuration(monkeypatch, platform):
     import uvicorn
 
-    canonical = importlib.import_module("backend.step_main")
+    canonical = importlib.import_module("backend.main")
     events = []
     server_config = []
     serve_result = object()
@@ -163,7 +177,7 @@ def test_shared_startup_preserves_selector_and_uvicorn_configuration(monkeypatch
     monkeypatch.setattr(canonical.asyncio, "Runner", Runner)
     canonical.run_server()
 
-    assert server_config == [(canonical.app, {"host": "127.0.0.1", "port": 8000, "loop": "asyncio"})]
+    assert server_config == [(canonical.app, {"host": "0.0.0.0", "port": 8000, "loop": "asyncio"})]
     expected = ["runner.enter", "serve", "runner.run", "runner.exit"] if platform == "win32" else ["server.run"]
     assert events == expected
 

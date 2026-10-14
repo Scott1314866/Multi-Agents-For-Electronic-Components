@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 
 from backend.agents.pcb.spec import PackageSpec
 
@@ -34,6 +35,7 @@ class PadGeometry:
     copper: tuple[float, float]
     paste: tuple[float, float]
     mask: tuple[float, float]
+    shape: str = "RECTANGLE"
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,9 @@ class DerivedPackage:
     #: 一脚标记的四角 (west, east, top, bottom)；pin1_marker=NONE 时为 None
     pin1_marker: tuple[float, float, float, float] | None
     warnings: list[str] = field(default_factory=list)
+    pin_pads: dict[str, PadGeometry] = field(default_factory=dict)
+    asm_half_y: float = 0
+    pb_half_y: float = 0
 
 
 def pin_y_sequence(count: int, pitch: float) -> list[float]:
@@ -70,6 +75,7 @@ def _pad_geometry(
     paste_mode: str,
     paste_inset: float,
     nsmd: bool,
+    shape: str = "RECTANGLE",
 ) -> PadGeometry:
     """由铜箔尺寸派生钢网与阻焊。
 
@@ -90,7 +96,7 @@ def _pad_geometry(
         paste = (round(w - 2 * paste_inset, 6), round(h - 2 * paste_inset, 6))
     else:  # NONE
         paste = (0.0, 0.0)
-    return PadGeometry(copper=(w, h), paste=paste, mask=mask)
+    return PadGeometry(copper=(w, h), paste=paste, mask=mask, shape=shape)
 
 
 def _place_dual(spec: PackageSpec) -> list[PinPlacement]:
@@ -131,30 +137,33 @@ def derive_package(spec: PackageSpec) -> DerivedPackage:
         引脚落点、两个焊盘堆栈的三层尺寸、各层框线与一脚标记。
 
     Raises:
-        NotImplementedError: ``pin_layout`` 不是 ``DUAL``。
-            目前只有 WSON8_3X3 这一个经样本验证的布局；QUAD 的引脚次序
-            需要新的器件样本与 Allegro 日志才能确证，不猜测。
+        NotImplementedError: ``pin_layout`` 不是 ``DUAL`` 或 ``EXPLICIT``。
+            QUAD 模板的引脚次序尚未实现；四边尺寸图可经确认使用 EXPLICIT 坐标。
     """
-    if spec.pin_layout != "DUAL":
+    if spec.pin_layout not in {"DUAL", "EXPLICIT"}:
         raise NotImplementedError(
             f"暂不支持 {spec.pin_layout} 布局：只有 DUAL（WSON8_3X3）经过样本验证。"
             "QUAD 的引脚次序与四边几何需要新的器件样本和 Allegro 日志才能确证。"
         )
 
     warnings: list[str] = []
-    if abs(spec.body_x - spec.body_y) > 1e-9:
-        warnings.append(
-            f"本体非正方形（{spec.body_x} × {spec.body_y}）；丝印与装配框目前"
-            "按 X 半宽派生（源自 WSON8_3X3 的正方形样本），矩形本体需要新样本验证"
-        )
-
-    pins = _place_dual(spec)
+    explicit = spec.pin_layout == "EXPLICIT"
+    pins = ([PinPlacement(p.number, p.x, p.y, (0, 0)) for p in spec.pads]
+            if explicit else _place_dual(spec))
+    sizes = {p.number: (p.size_x, p.size_y) for p in spec.pads} if explicit else {
+        p.number: (spec.land_x, spec.land_y) for p in pins}
+    shapes = {p.number: p.shape for p in spec.pads} if explicit else {}
+    pin_pads = {number: _pad_geometry(size, expansion=spec.mask_expansion,
+                paste_mode=spec.paste_mode, paste_inset=spec.paste_inset, nsmd=spec.nsmd,
+                shape=shapes.get(number, "RECTANGLE"))
+                for number, size in sizes.items()}
     land_pad = _pad_geometry(
-        (spec.land_x, spec.land_y),
+        next(iter(sizes.values())),
         expansion=spec.mask_expansion,
         paste_mode=spec.paste_mode,
         paste_inset=spec.paste_inset,
         nsmd=spec.nsmd,
+        shape=next(iter(shapes.values()), "RECTANGLE"),
     )
     ep_pad = None
     if spec.ep_present and spec.ep_x is not None and spec.ep_y is not None:
@@ -167,9 +176,23 @@ def derive_package(spec: PackageSpec) -> DerivedPackage:
         )
 
     asm_half = round(spec.body_x / 2, 6)
+    asm_half_y = round(spec.body_y / 2, 6)
     pb_half = round(asm_half + spec.mold_flash, 6)
+    pb_half_y = round(asm_half_y + spec.mold_flash, 6)
     silk_half = round(asm_half + spec.silk_clearance, 6)
     silk_span = round(silk_half + spec.silk_span_extra, 6)
+    if explicit:
+        # Keep the two silk lines outside every mask opening, including wide pin 1.
+        mask_x = max(abs(p.x) + pin_pads[p.number].mask[0] / 2 for p in pins)
+        mask_y = max(abs(p.y) + pin_pads[p.number].mask[1] / 2 for p in pins)
+        silk_half = round(max(asm_half_y + spec.silk_clearance,
+                             mask_y + spec.silk_clearance + spec.silk_line_width / 2), 6)
+        silk_span = round(max(asm_half, mask_x) + spec.silk_clearance + spec.silk_span_extra, 6)
+        pb_half = round(max(pb_half, mask_x + spec.pb_clearance), 6)
+        pb_half_y = round(max(pb_half_y, mask_y + spec.pb_clearance), 6)
+        warnings.append("EXPLICIT 逐焊盘布局已生成；本机 Allegro 回读验证通过前需复核")
+    elif spec.body_x != spec.body_y:
+        silk_half = round(asm_half_y + spec.silk_clearance, 6)
 
     refdes_silk_y = (
         spec.refdes_silk_y
@@ -198,6 +221,9 @@ def derive_package(spec: PackageSpec) -> DerivedPackage:
         refdes_silk_y=refdes_silk_y,
         pin1_marker=marker,
         warnings=warnings,
+        pin_pads=pin_pads,
+        asm_half_y=asm_half_y,
+        pb_half_y=pb_half_y,
     )
 
 
@@ -217,6 +243,27 @@ def check_clearances(spec: PackageSpec) -> list[str]:
 
     # 间距是十进制值（0.15 这类），但二进制浮点算出来可能是
     # 0.14999999999999991。先归整到 1e-9 再比较，否则恰好达标的规格会被误报。
+    if spec.pin_layout == "EXPLICIT":
+        rectangles = [(p.number, p.x, p.y, p.size_x, p.size_y, p.shape) for p in spec.pads]
+        if spec.ep_present:
+            rectangles.append((spec.ep_pin_number, 0, 0, spec.ep_x, spec.ep_y, "RECTANGLE"))
+        issues = []
+        for i, (a, x, y, w, h, shape) in enumerate(rectangles):
+            for b, bx, by, bw, bh, other_shape in rectangles[i + 1:]:
+                if shape == other_shape == "CIRCLE":
+                    gap = math.hypot(x - bx, y - by) - (w + bw) / 2
+                elif "CIRCLE" in (shape, other_shape):
+                    circle, rect = ((x, y, w), (bx, by, bw, bh)) if shape == "CIRCLE" else ((bx, by, bw), (x, y, w, h))
+                    cx, cy, diameter = circle
+                    rx, ry, rw, rh = rect
+                    gap = math.hypot(max(0, abs(cx - rx) - rw / 2), max(0, abs(cy - ry) - rh / 2)) - diameter / 2
+                else:
+                    gap = math.hypot(max(0, abs(x - bx) - (w + bw) / 2), max(0, abs(y - by) - (h + bh) / 2))
+                gap = round(max(0, gap), 6)
+                if gap < spec.min_clearance - 1e-6:
+                    issues.append(f"焊盘 {a}-{b} 铜箔间距 {gap:.3f} < {spec.min_clearance:.3f} mm")
+        return issues
+
     def _gap(value: float) -> float:
         return round(value, 9)
 
@@ -244,6 +291,13 @@ def check_clearances(spec: PackageSpec) -> list[str]:
 
 def summarize(spec: PackageSpec, derived: DerivedPackage) -> str:
     """给日志与人工复核用的一行人话摘要。"""
+    if spec.pin_layout == "EXPLICIT":
+        lines = [f"{spec.name}（{spec.family}，{spec.pin_count} 个独立焊盘）",
+                 f"本体 {spec.body_x:.3f}×{spec.body_y:.3f}，最大高度 {spec.body_height_max:.3f} mm"]
+        for p in spec.pads:
+            size = f"圆形铜盘直径 {p.size_x:.4f}" if p.shape == "CIRCLE" else f"矩形铜箔 {p.size_x:.4f}×{p.size_y:.4f}"
+            lines.append(f"引脚 {p.number}：中心 ({p.x:.4f}, {p.y:.4f})，{size} mm")
+        return "\n".join(lines)
     parts = [
         f"{spec.name}（{spec.family}，{spec.pin_count} 脚 + {'EP' if derived.ep_pad else '无 EP'}）",
         f"焊盘 {spec.land_x:.2f}×{spec.land_y:.2f} → 阻焊 "
