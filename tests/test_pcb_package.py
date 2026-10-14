@@ -241,6 +241,7 @@ def test_missing_toolchain_is_stopped_not_failed(tmp_path):
             "spec": wson8_3x3().model_dump(),
             "work_dir": str(tmp_path),
             "allegro_exe": str(tmp_path / "definitely-not-here.exe"),
+            "execution_mode": "local",
         },
         "pcb-test-no-toolchain",
         {"action": "confirm"},
@@ -259,7 +260,7 @@ def test_missing_spec_fails_with_actionable_message():
 
 
 def test_pcb_routes_are_registered():
-    from backend.step_main import app
+    from backend.main import app
 
     paths = app.openapi()["paths"]
     for path in (

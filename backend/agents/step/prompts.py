@@ -90,6 +90,9 @@ PCB 布局或非建模信息区域。不得处理或输出任何尺寸值。
    resistor_or_capacitor 写入 unresolved_fields。
 8. SOT、SOIC、TSSOP、SSOP、MSOP 等两侧多引脚 IC 封装应选择 ic/gullwing_ic，
    identified_features 必须与所选 Family 合同的 required_features 一致。
+   该模板支持奇数引脚（如两排 3+2）；不得把 5 脚补成 6 脚。
+   奇数或非对称布局必须分别明确 Y 负侧、Y 正侧的数量和首末中心跨度；
+   两脚排的跨度可能等于两个基本间距，不能只按总数除以二推断布局。
 9. QFN、UFQFPN、UQFNP 等四边无引脚 IC，或具有 D2/E2 中心裸露焊盘尺寸
    符号且端子无鸥翼弯折的封装，选择 ic/qfn_ufqfpn；QFP、LQFP、TQFP 等
    四边鸥翼引脚 IC 封装选择 ic/quad_gullwing_ic。不得仅因四边排列而混淆两者。
@@ -157,6 +160,16 @@ IMAGE_VIEW_SEMANTIC_SYSTEM_PROMPT = """你是工程图单一视图的尺寸语�
     Gage Plane 局部详图中，金属片厚度范围对应 terminal_thickness，引脚脚部
     水平伸出范围对应 terminal_length，引脚沿排列方向的带宽对应 terminal_width。
     这些规则只用于绑定证据 ID，禁止据此产生任何尺寸值。
+    SOT 两侧数量、宽度可能不同，即使总数为偶数也不能平分。分别核对
+    negative_side_pin_count/positive_side_pin_count 和两侧首末中心跨度，单脚排跨度为0。
+    negative_side_terminal_width/positive_side_terminal_width 分别绑定该侧宽度标注；
+    negative_side_terminal_length/positive_side_terminal_length、
+    negative_side_terminal_thickness/positive_side_terminal_thickness 分别绑定上下侧脚底长度与金属厚度。
+    宽端子的脚长、厚度不能套用另一侧；只填能明确对应该侧的图纸尺寸，不推断相同。
+    上侧是建模顶视图 Y 正侧，下侧是 Y 负侧；保持方向一致，不能从侧视图计数。
+    普通窄端子 b 与宽端子 D1 不可合并，也不可把总体高度 A 当作宽度。
+    相邻间距 e 与整排首末跨度不同：3脚排首末跨度为2个间距，不能把跨度当pitch。
+    毫米和英寸列只能选择同一单位列并进行明确转换，不能混列或把A/A1的数值绑定为L/c。
 15. 同一印刷尺寸堆叠中的 MAX/TYP/MIN 或上下限属于同一个物理量；只有对齐
     布局、真实分隔线、共享尺寸线等图纸证据能确认属于同组时，才把该组的
     数值 token 一起绑定到同一个 assignment，并引用相关真实 line_id。

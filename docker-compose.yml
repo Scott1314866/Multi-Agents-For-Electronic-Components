@@ -1,0 +1,133 @@
+# Windows 工作机 172.16.10.156 的依赖服务；backend.main / Cadence 在宿主机运行。
+# 配置检查（不输出凭据）：docker compose --env-file .env.local config --quiet
+# 现有 docker run 容器不能直接由 Compose 接管，迁移步骤见 docs/company-pilot.md。
+# 外部卷/网络须已存在，避免误启动一个没有公司数据的新实例。
+name: project01
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: project01-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-agent}
+      POSTGRES_USER: ${DB_USER:?请在 .env.local 配置 DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?请在 .env.local 配置 DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - type: bind
+        source: ./scripts/init_db_package.sql
+        target: /docker-entrypoint-initdb.d/01_init_db.sql
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - "127.0.0.1:${DB_PORT:-5433}:5432"
+    networks: [dependencies]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    stop_grace_period: 60s
+    logging: &bounded_logs
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.14
+    container_name: project01-etcd
+    restart: unless-stopped
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+    command:
+      - etcd
+      - --advertise-client-urls=http://etcd:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --data-dir=/etcd
+    volumes:
+      - etcd_data:/etcd
+    networks: [dependencies]
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    stop_grace_period: 30s
+    logging: *bounded_logs
+
+  minio:
+    # 使用工作机已验证的固定版本或 RepoDigest，避免 latest 漂移。
+    image: ${MINIO_IMAGE:?请在 .env.local 配置已验证的 MinIO 镜像版本或 digest}
+    container_name: project01-minio
+    restart: unless-stopped
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?请在 .env.local 配置现有 MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?请在 .env.local 配置现有 MINIO_SECRET_KEY}
+    volumes:
+      - minio_data:/data
+    networks: [dependencies]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    stop_grace_period: 30s
+    logging: *bounded_logs
+
+  milvus:
+    image: milvusdb/milvus:v2.4.0
+    container_name: project01-milvus
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:?请配置现有 MINIO_ACCESS_KEY}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:?请配置现有 MINIO_SECRET_KEY}
+    volumes:
+      - milvus_data:/var/lib/milvus
+    ports:
+      - "127.0.0.1:${MILVUS_PORT:-19531}:19530"
+    networks: [dependencies]
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9091/healthz"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    stop_grace_period: 60s
+    logging: *bounded_logs
+
+# 与工作机原部署一致。external 防止创建空卷或 down -v 删除数据。
+volumes:
+  postgres_data:
+    external: true
+    name: project01-postgres-data
+  etcd_data:
+    external: true
+    name: project01-etcd-data
+  minio_data:
+    external: true
+    name: project01-minio-data
+  milvus_data:
+    external: true
+    name: project01-milvus-data
+
+networks:
+  dependencies:
+    external: true
+    name: project01-network

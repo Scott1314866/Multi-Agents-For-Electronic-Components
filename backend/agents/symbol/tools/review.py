@@ -12,16 +12,20 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from backend.agents.symbol.contracts.models import Pin
+from backend.agents.symbol.contracts.extract import FigureInfo, canonical_dual_row
 from .vision import VisionClient
 
 _REVIEW_PROMPT = """这是一份芯片 datasheet 的第 {page} 页整页渲染图。
 
 请独立地读出**目标型号 {device}** 的全部引脚，包括引脚号、引脚名、以及引脚在封装图上的位置。
+目标封装：{package}。优先匹配该封装的物理引脚布局，底视图转换为顶视图；
+不要使用电气原理图中的接地位置替代封装位置。如果有附加引脚表页面，从目标型号列
+读取名称，并与封装编号核对。缺少名字但位置明确时保留 side，不要将已读清的位置设为 unknown。
 
 只输出 JSON：
 {{
   "pins": [
-    {{"pin_number": "1", "name": "ADDR", "side": "left"}}
+    {{"pin_number": "1", "name": "ADDR", "side": "left", "confidence": 0.98, "uncertain": false}}
   ],
   "notes": "读不清或不确定的地方"
 }}
@@ -30,6 +34,7 @@ _REVIEW_PROMPT = """这是一份芯片 datasheet 的第 {page} 页整页渲染�
 - side 只能是 left / right / top / bottom / unknown。
 - 引脚名照抄图上的印刷，不要凭常识纠正，也不要补全。
 - 只列你在这张图上真正看到的引脚。
+- confidence 为 0 到 1 的读取置信度；看不清或不能确定该引脚时 uncertain=true。
 """
 
 
@@ -58,8 +63,8 @@ class ReviewResult:
 
 
 def _norm_name(text: str) -> str:
-    """比对用归一化：大小写、空白、连字符差异不算差异。"""
-    return re.sub(r"[\s\-_/]+", "", text.strip().lower())
+    """Ignore case/spacing while preserving electrical polarity marks."""
+    return re.sub(r"\s+", "", text.strip().lower())
 
 
 # OCR 高频混淆字形。只用于「提示 + 给默认值」，绝不自动改写。
@@ -87,18 +92,22 @@ def review_pins(
     device: str,
     pins: list[Pin],
     page: int,
+    package: str = "",
+    support_image_paths: list[str] | None = None,
 ) -> ReviewResult:
     payload = client.ask_json(
-        [image_path],
-        _REVIEW_PROMPT.format(page=page, device=device or "（未指定）"),
+        [image_path, *(support_image_paths or [])],
+        _REVIEW_PROMPT.format(page=page, device=device or "（未指定）", package=package or "未指定"),
     )
+    figure = canonical_dual_row(FigureInfo.from_vision(payload, page=page), package)
     observed = {
-        str(item.get("pin_number", "")).strip(): item
+        str(item.get("pin_number", "")).strip(): {**item, "source_side": item.get("side"),
+            "side": figure.side_of(str(item.get("pin_number", "")).strip())}
         for item in (payload.get("pins") or [])
         if str(item.get("pin_number", "")).strip()
     }
 
-    result = ReviewResult(notes=str(payload.get("notes") or ""), raw=payload)
+    result = ReviewResult(notes=str(payload.get("notes") or ""), raw={**payload, "pins": list(observed.values())})
     expected_numbers = {pin.pin_number for pin in pins}
 
     result.missing = sorted(expected_numbers - set(observed))

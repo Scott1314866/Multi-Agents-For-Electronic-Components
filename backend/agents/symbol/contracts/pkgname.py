@@ -32,8 +32,8 @@ from typing import Any, Iterable
 # `QFN` 会在 `X2QFN` 里被匹配到（虽然 \b 通常能挡住，但顺序对了就不必依赖它）。
 _PACKAGE_PREFIXES = (
     "HTSSOP", "TSSOP", "VSSOP", "LQFP", "TQFP", "VQFP", "LFBGA", "TFBGA", "UFBGA",
-    "VFBGA", "WLCSP", "DSBGA", "HVQFN", "X2QFN", "WQFN", "UQFN", "VSON", "QFN",
-    "DFN", "SOIC", "SSOP", "MSOP", "PDIP", "DIP", "BGA", "LGA", "CSP", "SON", "SOT",
+    "VFBGA", "WLCSP", "LFCSP", "DSBGA", "HVQFN", "X2QFN", "WQFN", "UQFN", "VSON", "QFN",
+    "XDFN", "UDFN", "VDFN", "DFN", "SOIC", "SSOP", "MSOP", "PDIP", "DIP", "BGA", "LGA", "CSP", "SON", "SOT",
     "QFP",
 )
 

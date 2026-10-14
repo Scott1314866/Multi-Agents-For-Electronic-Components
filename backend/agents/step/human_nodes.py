@@ -331,7 +331,11 @@ def _store_operator_dimensions(
     def conflict_is_overridden(conflict: str) -> bool:
         if conflict in values or conflict in invalidated_derived_fields:
             return True
-        return any(
+        related=actionable_dimension_fields(
+            {"fused_evidence":fused.model_dump(),
+             "dimension_gate":{"conflicting_fields":[conflict]}}, conflicts_only=True,
+        )
+        return bool(set(related).intersection({*values,*invalidated_derived_fields})) or any(
             re.search(rf"(?<![\w]){re.escape(field)}(?![\w])", conflict)
             for field in {*values, *invalidated_derived_fields}
         )
@@ -382,7 +386,11 @@ def _dimension_conflict_details(state: dict[str, Any]) -> list[str]:
     conflicts = [str(item) for item in (state.get("dimension_gate") or {}).get("conflicting_fields", [])]
     details: list[str] = []
     for conflict in conflicts:
-        if "pin_span" in conflict and "pitch" in conflict:
+        if "该侧首末中心跨度加宽度超过本体长度" in conflict:
+            details.append("该侧引脚排超出本体长度：请一起核对该侧首末中心距、引脚宽度和本体长度；已确认的引脚宽度不一定是出错项。")
+        elif "同排引脚宽度不能达到或超过相邻中心间距" in conflict:
+            details.append("同排引脚重叠：请一起核对该侧引脚宽度、数量和首末中心距。")
+        elif "pin_span" in conflict and "pitch" in conflict:
             details.append("引脚中心距关系不一致：最外侧引脚中心距应等于（每侧引脚数 - 1）× 相邻引脚间距。")
         elif "total_height" in conflict and "housing_height" in conflict:
             details.append("高度关系不一致：总体高度应等于塑封本体高度 + 本体离板高度。")
@@ -406,15 +414,31 @@ def _dimension_question(state: dict[str, Any], fields: list[str], question_id: s
                 "value": parameter.get("value"), "unit": parameter.get("unit"),
                 "evidence_kind": parameter.get("evidence_kind"),
             })
+    source_review_fields=set((state.get("dimension_gate") or {}).get("role_unconfirmed_fields",[])) | set((state.get("dimension_gate") or {}).get("unit_unconfirmed_fields",[]))
+    if fused.get('family_id')=='ic/gullwing_ic':
+        from backend.agents.step.features.gullwing_layout import ROW_PARAMETERS,ROW_WIDTH_PARAMETERS,ROW_PROFILE_PARAMETERS
+        # Every pending two-side dimension question presents both rows together.
+        fields=list(dict.fromkeys([*fields,*ROW_PARAMETERS,*ROW_WIDTH_PARAMETERS,*ROW_PROFILE_PARAMETERS]))
+        for parameter in fused.get('parameters',[]):
+            name=parameter.get('canonical_name')
+            if name in fields and name not in existing:
+                existing[name]=[{'value':parameter.get('value'),'unit':parameter.get('unit'),'evidence_kind':parameter.get('evidence_kind')}]
     field_specs = {
         field: {
             "unit": expected_unit(field),
+            "group": 'upper' if field.startswith('positive_side_') else 'lower' if field.startswith('negative_side_') else 'body',
+            "optional": field in (ROW_PROFILE_PARAMETERS if fused.get('family_id')=='ic/gullwing_ic' else ()) and field not in (state.get('dimension_gate') or {}).get('missing_fields',[]),
             "description": guidance.get(field, field.replace("_", " ")),
             "reason": (
                 "图纸未能唯一识别该参数" if field in (state.get("dimension_gate") or {}).get("missing_fields", [])
                 else "图纸中的候选值存在冲突或置信度不足"
             ),
             "conflict_explanation": _CONFLICT_FIELD_HINTS.get(field, "请核对这个尺寸，并填写确认后的数值。"),
+            "source_review_required": field in source_review_fields,
+            "source_review_warning": (
+                "候选数值的尺寸符号或单位尚未确认，请按原图对应符号及毫米列重新核对。"
+                if field in source_review_fields else ""
+            ),
             "observed_candidates": existing.get(field, []),
         }
         for field in fields
@@ -436,6 +460,8 @@ def _dimension_question(state: dict[str, Any], fields: list[str], question_id: s
         ),
         "options": ["provide", "cancel"],
         "fields": field_specs,
+        "side_groups": fused.get('family_id')=='ic/gullwing_ic',
+        "side_orientation": "按建模顶视图核对上侧和下侧；上侧在图上方，下侧在图下方。请保持图纸和模型顶视图方向一致。",
         "conflict_details": _dimension_conflict_details(state),
         "intent": "fill_missing_or_resolve_conflicting_dimension_slots",
         "examples": [
@@ -452,7 +478,7 @@ def actionable_dimension_fields(state: dict[str, Any], *, conflicts_only: bool =
 
     fused = state.get("fused_evidence") or {}
     contract = image_family_catalog().get(fused.get("family_id"), {})
-    allowed = set(contract.get("required_parameters", []))
+    allowed = set(contract.get("required_parameters", [])) | set(contract.get('optional_parameters', []))
     gate = state.get("dimension_gate") or {}
     raw = list(gate.get("conflicting_fields", [])) if conflicts_only else [
         *gate.get("missing_fields", []), *gate.get("conflicting_fields", []),
@@ -468,6 +494,15 @@ def actionable_dimension_fields(state: dict[str, Any], *, conflicts_only: bool =
             continue
         # A deterministic chain violation is a relationship, not a slot name.
         fields.update(field for field in allowed if re.search(rf"(?<![\w]){re.escape(field)}(?![\w])", name))
+        # Older checkpoints named only the width although the failed relation
+        # also depended on the row span and body length. Keep them repairable.
+        for side in ('negative','positive'):
+            width=f'{side}_side_terminal_width'
+            if width in name:
+                if '该侧首末中心跨度加宽度超过本体长度' in name:
+                    fields.update({width,f'{side}_side_pin_span','body_length'} & allowed)
+                elif '同排引脚宽度不能达到或超过相邻中心间距' in name:
+                    fields.update({width,f'{side}_side_pin_span',f'{side}_side_pin_count'} & allowed)
         # Relationship aliases are not canonical parameter names.
         if "pin_span" in name and "pitch" in name:
             fields.update(field for field in ("pin_span", "terminal_pitch", "nominal_pin_count") if field in allowed)
@@ -513,6 +548,11 @@ async def ask_missing_dimensions_node(state: dict[str, Any]) -> dict[str, Any]:
     fields = actionable_dimension_fields(
         state, conflicts_only=bool(gate.get("conflicting_fields"))
     )
+    if gate.get("conflicting_fields"):
+        # A relationship error must not hide other rejected source candidates.
+        # Otherwise operators can be asked to repeat a correct width forever.
+        review_fields=set(gate.get("low_confidence_fields",[]))
+        fields=sorted(set(fields)|(review_fields & set(actionable_dimension_fields(state))))
     if not fields:
         updates: dict[str, Any] = {"status": "dimensions_supplied", "fused_evidence": fused}
         history = state.get("human_dimension_history", [])

@@ -15,7 +15,6 @@ from backend.agents.step.drawing.gate import (
     validate_golden_extraction,
 )
 from backend.agents.step.drawing.schemas import DrawingDimension, DrawingExtraction
-from backend.agents.step.families.registry import create_feature_ir
 from backend.agents.step.ir.executor import build_feature_model
 from backend.agents.step.ir.schemas import CADFeature, DrawingFeatureIR
 
@@ -33,3 +32,13 @@ __all__ = [
     "load_golden_cases",
     "validate_golden_extraction",
 ]
+
+
+def __getattr__(name: str):
+    if name!='create_feature_ir':
+        raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+    # Family planners import drawing.gate; importing the registry eagerly here
+    # would re-enter the partially initialized family.
+    from backend.agents.step.families.registry import create_feature_ir
+    globals()[name]=create_feature_ir
+    return create_feature_ir

@@ -23,7 +23,7 @@ function checkMessageHistory() {
     assert(/[\u4e00-\u9fff]/.test(context.templateLabel(family)));
     assert(!context.templateLabel(family).includes(family));
   }
-  assert.equal(context.formatAnswer('routing',{family_id:'ic/gullwing_ic'}),'选择模板：集成芯片 · 双侧鸥翼引脚封装');
+  assert.equal(context.formatAnswer('routing',{family_id:'ic/gullwing_ic'}),'选择模板：集成芯片 · 两侧鸥翼（含奇数引脚）');
   assert.equal(context.templateLabel('unknown/internal_id'),'其他封装模板');
   context.saveConversation('legacy-selection',[{role:'user',key:'history-a-0',text:'选择模板：connector/cn/dsub_connector'}]);
   context.seedConversation({drawing_id:'legacy-selection',result:{}});

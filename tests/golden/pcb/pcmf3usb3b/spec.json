@@ -1,0 +1,183 @@
+{
+  "name": "PCMF3USB3B_C",
+  "family": "WLCSP15",
+  "drawing_code": "",
+  "body_x": 2.37,
+  "body_y": 1.17,
+  "body_height_max": 0.64,
+  "mold_flash": 0.05,
+  "pin_count": 15,
+  "pin_layout": "EXPLICIT",
+  "pin_pitch": null,
+  "pin_columns_x": null,
+  "pin_numbering": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A5",
+    "A6",
+    "B1",
+    "B2",
+    "B3",
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C5",
+    "C6"
+  ],
+  "pads": [
+    {
+      "number": "A1",
+      "x": -1.0,
+      "y": 0.4,
+      "size_x": 0.25,
+      "size_y": 0.25,
+      "shape": "CIRCLE"
+    },
+    {
+      "number": "A2",
+      "x": -0.6,
+      "y": 0.4,
+      "size_x": 0.25,
+      "size_y": 0.25,
+      "shape": "CIRCLE"
+    },
+    {
+      "number": "A3",
+      "x": -0.2,
+      "y": 0.4,
+      "size_x": 0.25,
+      "size_y": 0.25,
+      "shape": "CIRCLE"
+    },
+    {
+      "number": "A4",
+      "x": 0.2,
+      "y": 0.4,
+      "size_x": 0.25,
+      "size_y": 0.25,
+      "shape": "CIRCLE"
+    },
+    {
+      "number": "A5",
+      "x": 0.6,
+      "y": 0.4,
+      "size_x": 0.25,
+      "size_y": 0.25,
+      "shape": "CIRCLE"
+    },
+    {
+      "number": "A6",
+      "x": 1.0,
+      "y": 0.4,
+      "size_x": 0.25,
+      "size_y": 0.25,
+      "shape": "CIRCLE"
+    },
+    {
+      "number": "B1",
+      "x": -0.8,
+      "y": 0.0,
+      "size_x": 0.25,
+      "size_y": 0.25,
+      "shape": "CIRCLE"
+    },
+    {
+      "number": "B2",
+      "x": 0.0,
+      "y": 0.0,
+      "size_x": 0.25,
+      "size_y": 0.25,
+      "shape": "CIRCLE"
+    },
+    {
+      "number": "B3",
+      "x": 0.8,
+      "y": 0.0,
+      "size_x": 0.25,
+      "size_y": 0.25,
+      "shape": "CIRCLE"
+    },
+    {
+      "number": "C1",
+      "x": -1.0,
+      "y": -0.4,
+      "size_x": 0.25,
+      "size_y": 0.25,
+      "shape": "CIRCLE"
+    },
+    {
+      "number": "C2",
+      "x": -0.6,
+      "y": -0.4,
+      "size_x": 0.25,
+      "size_y": 0.25,
+      "shape": "CIRCLE"
+    },
+    {
+      "number": "C3",
+      "x": -0.2,
+      "y": -0.4,
+      "size_x": 0.25,
+      "size_y": 0.25,
+      "shape": "CIRCLE"
+    },
+    {
+      "number": "C4",
+      "x": 0.2,
+      "y": -0.4,
+      "size_x": 0.25,
+      "size_y": 0.25,
+      "shape": "CIRCLE"
+    },
+    {
+      "number": "C5",
+      "x": 0.6,
+      "y": -0.4,
+      "size_x": 0.25,
+      "size_y": 0.25,
+      "shape": "CIRCLE"
+    },
+    {
+      "number": "C6",
+      "x": 1.0,
+      "y": -0.4,
+      "size_x": 0.25,
+      "size_y": 0.25,
+      "shape": "CIRCLE"
+    }
+  ],
+  "pin_text_offset": 0.1,
+  "land_x": null,
+  "land_y": null,
+  "nsmd": true,
+  "mask_expansion": 0.0375,
+  "paste_mode": "MATCH_LAND",
+  "paste_inset": 0.0,
+  "min_clearance": 0.15,
+  "ep_present": false,
+  "ep_x": null,
+  "ep_y": null,
+  "ep_pin_number": "EP",
+  "silk_line_width": 0.12,
+  "silk_clearance": 0.1,
+  "silk_span_extra": 0.05,
+  "asm_line_width": 0.1,
+  "pb_clearance": 0.05,
+  "pin1_marker": "NONE",
+  "pin1_marker_size": 0.3,
+  "refdes_prefix": "U*",
+  "refdes_text_block": "3",
+  "refdes_silk_y": null,
+  "units": "millimeters",
+  "accuracy": 4,
+  "extents": [
+    -20.0,
+    -20.0,
+    20.0,
+    20.0
+  ],
+  "pin_text_block": "2"
+}

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 from backend.config import get_settings
@@ -60,19 +61,35 @@ def mineru_token() -> str:
 def resolve_tclsh(exe: str | Path | None = None) -> Path:
     """定位 ``tclsh.exe``。
 
-    优先级：显式传入 → 环境变量 ``CADENCE_TCLSH`` → 常规安装路径。
+    优先级：显式传入 → ``CADENCE_TCLSH`` → ``CADENCE_INSTALL_DIR`` → 常规安装路径。
 
     Raises:
         FileNotFoundError: 三处都找不到。这是**环境缺失**，调用方应把任务
             标记为"等待环境"而不是"生成失败"。
     """
+    settings = get_settings()
+    selected = exe or os.environ.get(TCLSH_ENV_VAR) or settings.cadence_tclsh
+    if selected:
+        candidate = Path(selected)
+        if candidate.is_file():
+            return candidate
+        raise FileNotFoundError(f"配置的 Cadence Tcl 运行器不存在：{candidate}")
     candidates: list[Path] = []
-    if exe is not None:
-        candidates.append(Path(exe))
-    env = os.environ.get(TCLSH_ENV_VAR)
-    if env:
-        candidates.append(Path(env))
+    if settings.cadence_install_dir:
+        candidate = Path(settings.cadence_install_dir) / "tools" / "bin" / "tclsh.exe"
+        if candidate.is_file():
+            return candidate
+        raise FileNotFoundError(f"配置的 Cadence 安装目录缺少 Tcl 运行器：{candidate}")
     candidates.append(DEFAULT_TCLSH)
+    # 只检查安装根下的版本目录和固定 tools/bin，不递归扫描整个磁盘。
+    for root in (Path("C:/Cadence"), Path("D:/Cadence"), Path("C:/Program Files/Cadence")):
+        if root.is_dir():
+            versions = sorted(
+                root.glob("SPB_*"),
+                key=lambda path: tuple(int(n) for n in re.findall(r"\d+", path.name)),
+                reverse=True,
+            )
+            candidates.extend(path / "tools" / "bin" / "tclsh.exe" for path in versions)
 
     for candidate in candidates:
         if candidate.is_file():
@@ -81,3 +98,12 @@ def resolve_tclsh(exe: str | Path | None = None) -> Path:
         "找不到 tclsh.exe。请在有 Cadence 的机器上运行，或设置环境变量 "
         f"{TCLSH_ENV_VAR} 指向可执行文件。已尝试：{', '.join(str(c) for c in candidates)}"
     )
+
+
+def resolve_dbo_dll(tclsh: Path) -> Path:
+    """DBO DLL 与所选运行器使用同一安装版本。"""
+    selected = os.environ.get("CADENCE_DBO_DLL") or get_settings().cadence_dbo_dll
+    candidate = Path(selected) if selected else tclsh.parent / "orDb_Dll_Tcl64.dll"
+    if not candidate.is_file():
+        raise FileNotFoundError(f"找不到 Cadence DBO 动态库：{candidate}")
+    return candidate

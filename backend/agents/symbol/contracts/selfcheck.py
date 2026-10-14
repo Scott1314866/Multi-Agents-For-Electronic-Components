@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Mapping
 
 from .models import Conflict, Pin
+from .review_policy import documented_exposed_pad, verified_exposed_pad
 from .pkgname import (
     PackageHint,
     _plausible_pin_count,
@@ -190,7 +191,7 @@ def _is_number(text: str) -> bool:
 
 
 def _norm(text: str) -> str:
-    return re.sub(r"[\s\-_/]+", "", (text or "").strip().lower())
+    return re.sub(r"\s+", "", (text or "").strip().lower())
 
 
 def _check_pins(pins: list[Pin], report: CheckReport) -> None:
@@ -386,14 +387,34 @@ def _check_package(
 
     expected = pin_count_from_package(package)
     if expected is not None:
-        if expected == len(pins):
+        pads = [pin for pin in pins if re.fullmatch(r"EP(?:AD)?|EXPOSED\s*PAD", pin.name, re.I)]
+        peripheral = [pin for pin in pins if pin not in pads]
+        documented_pad = (len(pads) == 1 and pads[0].pin_number == str(expected + 1)
+                and documented_exposed_pad(pads[0].name, pads[0].description))
+        if (documented_pad
+                and len(peripheral) == expected
+                and {p.pin_number for p in peripheral} == {str(n) for n in range(1, expected + 1)}):
+            report.findings.append(Finding(
+                code="exposed_pad", severity="info",
+                title=f"{package}：{expected} 个外围引脚，另有 1 个裸露焊盘（{pads[0].pin_number}）",
+                hint="裸露焊盘已保留在符号中。"))
+            return
+        observed = len(peripheral) if documented_pad else len(pins)
+        if expected == observed:
+            if documented_pad:
+                report.findings.append(Finding(
+                    code="peripheral_numbers_mismatch", severity="error",
+                    title="外围引脚编号与封装不一致",
+                    detail=f"应为 1–{expected}，裸露焊盘不能替代缺失的外围引脚。",
+                    hint="请核对引脚表中的编号。"))
+                return
             return
         title = (
             f"引脚数和封装名对不上：{package} 应该有 {expected} 个，"
-            f"实际解析出 {len(pins)} 个"
+            f"实际解析出 {observed} 个" + ("（另有裸露焊盘）" if documented_pad else "")
         )
-        detail = f"差 {abs(expected - len(pins))} 个。"
-        prompt = f"「{package}」应有 {expected} 个引脚，实际 {len(pins)} 个。封装名对吗？"
+        detail = f"差 {abs(expected - observed)} 个。"
+        prompt = f"「{package}」应有 {expected} 个外围引脚，实际 {observed} 个。封装名对吗？"
     elif counts:
         # 落在这份手册出现过的**任何一个**封装脚数上就算过 —— 多封装手册（STM32 一份
         # 覆盖 LQFP32/48/64、WLCSP36）给出的是一组值，不是单值。全对不上才是解析错了。
@@ -511,7 +532,7 @@ def _check_sides(
         )
 
 
-def _check_review(review: ReviewResult | None, pins: list[Pin], report: CheckReport) -> None:
+def _check_review(review: ReviewResult | None, pins: list[Pin], report: CheckReport, *, package: str = "") -> None:
     """复核差异：**按最终产物重新判一遍**，别拿中间态吓人。
 
     `review.mismatches` 是 ④ 的原始记录。在那之后，自动裁决（`AINO` → `AIN0` 这类
@@ -536,13 +557,20 @@ def _check_review(review: ReviewResult | None, pins: list[Pin], report: CheckRep
     names = [m for m in review.mismatches if m.field == "name" and still_off(m)]
     sides = [m for m in review.mismatches if m.field == "side" and still_off(m)]
 
-    if review.missing:
+    missing = list(review.missing)
+    pad = verified_exposed_pad(pins, package)
+    if pad and pad.pin_number in missing:
+        missing.remove(pad.pin_number)
+        report.findings.append(Finding(
+            code="review_pad_not_shown", severity="info",
+            title=f"裸露焊盘 {pad.pin_number} 未在外围引脚图显示，已按手册保留"))
+    if missing:
         report.findings.append(
             Finding(
                 code="review_missing",
                 severity="warn",
-                title=f"独立复核在图上没看到 {len(review.missing)} 个引脚",
-                detail="、".join(review.missing[:20]) + ("…" if len(review.missing) > 20 else ""),
+                title=f"独立复核在图上没看到 {len(missing)} 个引脚",
+                detail="、".join(missing[:20]) + ("…" if len(missing) > 20 else ""),
                 hint="复核看的是引脚图。要么这些脚图上确实没有，要么表里多读了行。",
             )
         )
@@ -684,7 +712,7 @@ def check(
     _check_names(pins, report)
     if sides_evaluated:
         _check_sides(pins, layout, report)
-    _check_review(review, pins, report)
+    _check_review(review, pins, report, package=package)
     _check_conflicts(conflicts, report)
     _check_capture(capture_passed, files, report)
 

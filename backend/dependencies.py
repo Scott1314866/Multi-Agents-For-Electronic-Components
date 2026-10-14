@@ -3,6 +3,7 @@ from typing import AsyncGenerator
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials  # 解析 Authorization: Bearer 头
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy import text
 from jose import JWTError, jwt  # JWT 的编解码库
 import os, sys
 
@@ -45,6 +46,7 @@ bearer_scheme = HTTPBearer()  # FastAPI 安全方案：自动从请求头解析 
 async def get_current_user(
         # Depends(bearer_scheme)：FastAPI 自动取出 Bearer Token；没带或格式错会直接 401
         credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+        db: AsyncSession = Depends(get_db),
 ) -> dict:
     """FastAPI 依赖：验证 JWT Token，返回当前用户信息。
     返回 {"user_id": str, "role": str, "tenant_id": str}；Token 无效则抛 401。"""
@@ -73,7 +75,20 @@ async def get_current_user(
     except JWTError:  # 解码失败（签名错/过期等）
         raise credentials_exception
 
-    return {"user_id": user_id, "role": role, "tenant_id": tenant_id}
+    from uuid import UUID
+    try:
+        UUID(user_id)
+    except (ValueError, TypeError, AttributeError):
+        raise credentials_exception
+    result = await db.execute(text("""
+        SELECT id, username, email, role, tenant_id, is_active
+        FROM users WHERE id = :id AND tenant_id = :tenant_id
+    """), {"id": user_id, "tenant_id": tenant_id})
+    row = result.mappings().first()
+    if not row or not row["is_active"]:
+        raise credentials_exception
+    return {"user_id": str(row["id"]), "role": row["role"], "tenant_id": row["tenant_id"],
+            "username": row["username"], "email": row["email"]}
 
 
 if __name__ == '__main__':

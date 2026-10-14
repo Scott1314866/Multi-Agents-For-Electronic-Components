@@ -1,6 +1,6 @@
 """PCB 封装生成助手。
 
-把「封装参数 → Cadence Allegro 封装（``.dra`` / ``.psm`` / ``.pad``）」这条
+把「封装尺寸图片/参数 → Cadence Allegro 封装（``.dra`` / ``.psm`` / ``.pad``）」这条
 链路，从源程序 ``Module_02`` 的硬编码 SKILL 脚本，改造成参数化、可校验、
 可人工暂停的 LangGraph 工作流。
 

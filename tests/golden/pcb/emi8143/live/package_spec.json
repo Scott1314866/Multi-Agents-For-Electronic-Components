@@ -1,0 +1,176 @@
+{
+  "name": "XDFN16_3_5x1_35__0_4P",
+  "family": "XDFN",
+  "drawing_code": "711AW",
+  "body_x": 3.5,
+  "body_y": 1.35,
+  "body_height_max": 0.5,
+  "mold_flash": 0.05,
+  "pin_count": 16,
+  "pin_layout": "EXPLICIT",
+  "pin_pitch": null,
+  "pin_columns_x": null,
+  "pin_numbering": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "16",
+    "15",
+    "14",
+    "13",
+    "12",
+    "11",
+    "10",
+    "9"
+  ],
+  "pads": [
+    {
+      "number": "1",
+      "x": -1.55,
+      "y": -0.45,
+      "size_x": 0.55,
+      "size_y": 0.65
+    },
+    {
+      "number": "2",
+      "x": -1.0,
+      "y": -0.45,
+      "size_x": 0.25,
+      "size_y": 0.65
+    },
+    {
+      "number": "3",
+      "x": -0.6,
+      "y": -0.45,
+      "size_x": 0.25,
+      "size_y": 0.65
+    },
+    {
+      "number": "4",
+      "x": -0.2,
+      "y": -0.45,
+      "size_x": 0.25,
+      "size_y": 0.65
+    },
+    {
+      "number": "5",
+      "x": 0.2,
+      "y": -0.45,
+      "size_x": 0.25,
+      "size_y": 0.65
+    },
+    {
+      "number": "6",
+      "x": 0.6,
+      "y": -0.45,
+      "size_x": 0.25,
+      "size_y": 0.65
+    },
+    {
+      "number": "7",
+      "x": 1.0,
+      "y": -0.45,
+      "size_x": 0.25,
+      "size_y": 0.65
+    },
+    {
+      "number": "8",
+      "x": 1.4,
+      "y": -0.45,
+      "size_x": 0.25,
+      "size_y": 0.65
+    },
+    {
+      "number": "16",
+      "x": -1.4,
+      "y": 0.45,
+      "size_x": 0.25,
+      "size_y": 0.65
+    },
+    {
+      "number": "15",
+      "x": -1.0,
+      "y": 0.45,
+      "size_x": 0.25,
+      "size_y": 0.65
+    },
+    {
+      "number": "14",
+      "x": -0.6,
+      "y": 0.45,
+      "size_x": 0.25,
+      "size_y": 0.65
+    },
+    {
+      "number": "13",
+      "x": -0.2,
+      "y": 0.45,
+      "size_x": 0.25,
+      "size_y": 0.65
+    },
+    {
+      "number": "12",
+      "x": 0.2,
+      "y": 0.45,
+      "size_x": 0.25,
+      "size_y": 0.65
+    },
+    {
+      "number": "11",
+      "x": 0.6,
+      "y": 0.45,
+      "size_x": 0.25,
+      "size_y": 0.65
+    },
+    {
+      "number": "10",
+      "x": 1.0,
+      "y": 0.45,
+      "size_x": 0.25,
+      "size_y": 0.65
+    },
+    {
+      "number": "9",
+      "x": 1.4,
+      "y": 0.45,
+      "size_x": 0.25,
+      "size_y": 0.65
+    }
+  ],
+  "pin_text_offset": 0.1,
+  "land_x": null,
+  "land_y": null,
+  "nsmd": true,
+  "mask_expansion": 0.05,
+  "paste_mode": "MATCH_LAND",
+  "paste_inset": 0.0,
+  "min_clearance": 0.15,
+  "ep_present": false,
+  "ep_x": null,
+  "ep_y": null,
+  "ep_pin_number": "EP",
+  "silk_line_width": 0.12,
+  "silk_clearance": 0.1,
+  "silk_span_extra": 0.05,
+  "asm_line_width": 0.1,
+  "pb_clearance": 0.05,
+  "pin1_marker": "NONE",
+  "pin1_marker_size": 0.3,
+  "refdes_prefix": "U*",
+  "refdes_text_block": "3",
+  "refdes_silk_y": null,
+  "units": "millimeters",
+  "accuracy": 4,
+  "extents": [
+    -20.0,
+    -20.0,
+    20.0,
+    20.0
+  ],
+  "pin_text_block": "2"
+}

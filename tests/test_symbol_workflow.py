@@ -49,7 +49,7 @@ def offline_graph(monkeypatch, tmp_path):
         seen["vision_prompt"] = prompt
         return {"pins": [{"pin_number": "1", "side": "left"}, {"pin_number": "2", "side": "right"}]}
 
-    async def review(*args):
+    async def review(*args, **kwargs):
         return SimpleNamespace(passed=True, mismatches=[], missing=[], extra=[], notes="")
 
     async def generate(layout, out_dir):
@@ -101,6 +101,61 @@ def test_filename_candidate_is_written_to_device(offline_graph):
     assert result["__interrupt__"][0].value["stage"] == "output"
 
 
+def test_ad7682_real_tables_review_and_layout_match_user_reference(offline_graph, monkeypatch):
+    """Real cached OCR plus supplied answer; no service/Cadence calls."""
+    import json
+    from backend.agents.symbol.tools.review import review_pins
+    from backend.agents.symbol.tools.capture import render_tcl
+
+    _, state, _ = offline_graph
+    golden = Path(__file__).parent / "golden/symbol/ad7682"
+    content = json.loads((golden / "mineru_pin_tables.json").read_text(encoding="utf-8"))
+    reference = json.loads((golden / "reference_pins.json").read_text(encoding="utf-8"))
+
+    async def locate(state):
+        return {"locate": {"targets": {"pins": [11]}}, "status": "pages_located"}
+
+    async def parse(*args):
+        return SimpleNamespace(content_list=content, notes=[])
+
+    async def vision(*args):
+        return {"pins": sorted(reference, key=lambda p: (p["side"], p["side_order"]))}
+
+    async def review(image_path, device, pins, page, **kwargs):
+        client = SimpleNamespace(ask_json=lambda *args: {"pins": reference})
+        return review_pins(client, image_path, device=device, pins=pins, page=page)
+
+    monkeypatch.setattr("backend.agents.symbol.graph.locate_pages_node", locate)
+    monkeypatch.setattr(nodes, "_parse_with_mineru", parse)
+    monkeypatch.setattr(nodes, "_ask_vision", vision)
+    monkeypatch.setattr(nodes, "_review", review)
+    graph = build_symbol_graph(InMemorySaver())
+    state.update(device="AD7682BCPZRL7", package="LFCSP-20")
+
+    async def scenario():
+        config = {"configurable": {"thread_id": str(uuid.uuid4())}}
+        result = await graph.ainvoke(state, config)
+        assert result["__interrupt__"][0].value["stage"] == "output"
+        assert {(i["pin_number"], i["field"]) for i in result["review"]["auto_resolutions"]} == {
+            ("16", "name"), ("21", "name")}
+        assert len(result["table_pins"]) == 21
+        # Source description and independent reading resolve these without an interrupt.
+        assert result["check_report"]["score"] == 100
+        actual = {p["pin_number"]: p for p in result["merged_pins"]}
+        for expected in reference:
+            for key in ("name", "side", "side_order"):
+                assert actual[expected["pin_number"]][key] == expected[key]
+        assert not result.get("artifact_paths")  # Approval remains mandatory.
+        layout = build_layout(nodes._dicts_to_pins(result["merged_pins"]), state["device"])
+        placed = {pin.number: pin for pin in layout.pins}
+        assert len(placed) == 21
+        assert placed["21"].y < placed["20"].y < placed["11"].y  # DBO +Y points down.
+        tcl = render_tcl(layout, out_dir=state["work_dir"])
+        assert tcl.count("NewPinNumber [") == 21
+
+    run(scenario())
+
+
 @pytest.mark.parametrize("node,key", [(human_nodes.ask_device_node, "device"), (human_nodes.ask_package_node, "package")])
 def test_manual_selection_updates_state(monkeypatch, node, key):
     monkeypatch.setattr(human_nodes, "_ask", lambda request: {"action": "provide", "value": "USER_VALUE"})
@@ -139,6 +194,7 @@ def test_fact_answers_survive_recheck_and_update_package(monkeypatch):
 
 
 def test_missing_toolchain_keeps_downloadable_script(monkeypatch, tmp_path):
+    monkeypatch.setattr(nodes, "capture_generate", capture.generate)
     def unavailable(*args):
         raise FileNotFoundError("No Cadence")
 
@@ -268,7 +324,7 @@ def test_partial_resolution_is_rejected():
 def test_review_uses_image_page_number(monkeypatch):
     seen = []
 
-    async def review(image, device, pins, page):
+    async def review(image, device, pins, page, **kwargs):
         seen.append(page)
         return SimpleNamespace(passed=True, mismatches=[], missing=[], extra=[], notes="")
 
@@ -277,13 +333,17 @@ def test_review_uses_image_page_number(monkeypatch):
     assert seen == [23]
 
 
-@pytest.mark.parametrize("contents,passed", [(b"", False), (b"binary output", True)])
+@pytest.mark.parametrize("contents,passed", [(b"", False), (b"binary output", False), (capture.OLE_HEADER + b"native output", True)])
 def test_capture_requires_nonempty_binary_artifacts(monkeypatch, tmp_path, contents, passed):
     monkeypatch.setattr(capture, "resolve_tclsh", lambda exe: Path("fake-tclsh.exe"))
+    dll = tmp_path / "orDb_Dll_Tcl64.dll"
+    dll.touch()
+    monkeypatch.setattr(capture, "resolve_dbo_dll", lambda exe: dll)
 
     def subprocess_run(*args, **kwargs):
+        run_dir = Path(args[0][1]).parent
         for extension in ("OLB", "DSN"):
-            (tmp_path / f"ADS1115.{extension}").write_bytes(contents)
+            (run_dir / f"ADS1115.{extension}").write_bytes(contents)
         return SimpleNamespace(returncode=0, stdout=capture.PASS_MARKER.encode(), stderr=b"")
 
     monkeypatch.setattr(capture.subprocess, "run", subprocess_run)

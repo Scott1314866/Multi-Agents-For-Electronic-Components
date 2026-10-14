@@ -397,6 +397,9 @@ def figure_pages(
         return []
 
     wanted = (package or "").strip().lower()
+    package_parts = re.fullmatch(r"(.+?)[\s_-]*(\d+)", wanted)
+    pattern = (re.compile(r"\b" + re.escape(package_parts[1]) + r"[\s_-]*" + package_parts[2] + r"(?!\d)")
+               if package_parts else None)
     scored: list[tuple[int, int]] = []
     with pymupdf.open(path) as doc:
         for page_no in pages:
@@ -404,8 +407,14 @@ def figure_pages(
                 continue
             text = doc[page_no - 1].get_text("text").lower()
             score = 0
-            if wanted and wanted in text:
+            matches_package = bool(pattern.search(text)) if pattern else bool(wanted and wanted in text)
+            outline = "package dimensions" in text or "package outline" in text
+            if outline and pattern and not matches_package:
+                continue  # Another variant's mechanical drawing is not a pin source.
+            if matches_package:
                 score += 2
+                if outline and any(marker in text for marker in ("top view", "bottom view", "pin one", "pin 1")):
+                    score += 5
             if any(marker in text for marker in FIGURE_MARKERS):
                 score += 1
             if any(marker in text for marker in TABLE_PAGE_MARKERS):

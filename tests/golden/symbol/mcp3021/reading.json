@@ -1,0 +1,58 @@
+{
+  "device": "MCP3021",
+  "package": "SOT-23A",
+  "pin_count": 5,
+  "body_bbox": [
+    0.39622641509433965,
+    0.291005291005291,
+    0.6142557651991615,
+    0.8386243386243386
+  ],
+  "pins": [
+    {
+      "pin_number": "1",
+      "name": "VDD",
+      "side": "left",
+      "x": 0.39622641509433965,
+      "y": 0.4074074074074074,
+      "confidence": 1,
+      "uncertain": false
+    },
+    {
+      "pin_number": "2",
+      "name": "VSS",
+      "side": "left",
+      "x": 0.39622641509433965,
+      "y": 0.582010582010582,
+      "confidence": 1,
+      "uncertain": false
+    },
+    {
+      "pin_number": "3",
+      "name": "AIN",
+      "side": "left",
+      "x": 0.39622641509433965,
+      "y": 0.7724867724867724,
+      "confidence": 1,
+      "uncertain": false
+    },
+    {
+      "pin_number": "4",
+      "name": "SDA",
+      "side": "right",
+      "x": 0.6142557651991615,
+      "y": 0.7724867724867724,
+      "confidence": 1,
+      "uncertain": false
+    },
+    {
+      "pin_number": "5",
+      "name": "SCL",
+      "side": "right",
+      "x": 0.6142557651991615,
+      "y": 0.4074074074074074,
+      "confidence": 1,
+      "uncertain": false
+    }
+  ]
+}

@@ -1,8 +1,8 @@
 """符号生成 Agent 的状态定义。
 
-唯一必填输入是 ``pdf_path``。**大块中间产物一律落盘，state 里只留路径** ——
-MinerU 的 ``content_list`` 与渲染出的页面图动辄几 MB，塞进 state 会把
-PostgreSQL 的 checkpoint 撑爆。
+输入支持 ``input_kind="image"`` 与 ``image_path``，或 ``input_kind="pdf"``
+与 ``pdf_path``；未声明类型的历史任务按 PDF 恢复。图片识别结果及几何坐标
+保存于 state，源文件、二进制产物和 MinerU 大块中间结果落盘，state 保存路径。
 
 约定与其他 Agent 一致：``TypedDict, total=False``，节点只返回自己写出的
 增量，列表靠节点里显式拼接。
@@ -16,12 +16,23 @@ from typing_extensions import TypedDict
 
 
 class SymbolDrawingState(TypedDict, total=False):
-    """datasheet PDF → OrCAD Capture 符号的工作流状态。"""
+    """PDF 手册或封装引脚图 → OrCAD Capture 符号的工作流状态。"""
 
     task: str
+    drawing_id: str
+    tenant_id: str
+    execution_mode: str
     mode: str
-    # ── 唯一必填输入 ────────────────────────────────────────────
+    # ── 输入来源与图片识别结果 ──────────────────────────────────
     pdf_path: str
+    input_kind: str
+    image_path: str
+    source_path: str
+    image_meta: dict[str, Any]
+    image_reading: dict[str, Any]
+    image_geometry: dict[str, Any]
+    image_pin_count: int | None
+    auto_generate: bool
     original_filename: str
     device: str
     package: str

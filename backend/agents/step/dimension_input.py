@@ -11,6 +11,16 @@ from typing import Any
 
 
 FIELD_LABELS: dict[str, tuple[str, ...]] = {
+    "positive_side_pin_count": ("上侧引脚数量", "上面引脚数量"),
+    "negative_side_pin_count": ("下侧引脚数量", "下面引脚数量"),
+    "positive_side_pin_span": ("上侧首末引脚中心距",),
+    "negative_side_pin_span": ("下侧首末引脚中心距",),
+    "positive_side_terminal_width": ("上侧引脚宽度",),
+    "negative_side_terminal_width": ("下侧引脚宽度",),
+    "positive_side_terminal_length": ("上侧引脚脚底长度",),
+    "negative_side_terminal_length": ("下侧引脚脚底长度",),
+    "positive_side_terminal_thickness": ("上侧引脚金属厚度",),
+    "negative_side_terminal_thickness": ("下侧引脚金属厚度",),
     "nominal_pin_count": ("引脚数", "总引脚数", "pin count", "number of pins", "n-lead"),
     "terminal_pitch": ("引脚间距", "脚距", "pitch"),
     "pin_span": ("引脚跨距", "脚跨距", "lead span", "pin span"),
@@ -75,7 +85,8 @@ def _normalize_value(field: str, value: Any, unit: Any = None) -> dict[str, Any]
     if normalized_unit not in factors:
         raise ValueError(f"{field} 不支持单位 {unit!r}，请使用 mm、cm、um、mil 或 inch")
     number *= factors[normalized_unit]
-    if not 0 < number <= 1000:
+    zero_span=field in {'negative_side_pin_span','positive_side_pin_span'} and number==0
+    if not zero_span and not 0 < number <= 1000:
         raise ValueError(f"{field} 换算为 mm 后必须大于 0 且不超过 1000")
     return {"value": number, "unit": "mm"}
 

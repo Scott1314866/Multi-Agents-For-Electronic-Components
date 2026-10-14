@@ -177,13 +177,19 @@ def describe(layout: SymbolLayout) -> str:
     counts = {side: 0 for side in _SIDES}
     for pin in layout.pins:
         counts[pin.side] = counts.get(pin.side, 0) + 1
+    gaps = set()
+    for side in _SIDES:
+        positions = sorted(pin.y if side in {"left", "right"} else pin.x
+                           for pin in layout.pins if pin.side == side)
+        gaps.update(b - a for a, b in zip(positions, positions[1:]))
+    spacing = "/".join(str(gap) for gap in sorted(gaps)) or str(PITCH)
     lines = [
         f"{layout.part_name or '(未命名)'}：{len(layout.pins)} 脚"
         f"（左 {counts['left']} / 右 {counts['right']} / "
         f"上 {counts['top']} / 下 {counts['bottom']}）",
         f"  体尺寸 {layout.body_width} × {layout.body_height} DBO"
         f"（{layout.body_width * 10} × {layout.body_height * 10} mil）",
-        f"  引脚间距 {PITCH} DBO（{PITCH * 10} mil），引脚长 {PIN_LEN} DBO",
+        f"  引脚间距 {spacing} DBO，引脚长 {PIN_LEN} DBO",
     ]
     for warning in layout.warnings:
         lines.append(f"  ! {warning}")
@@ -205,10 +211,10 @@ def preview(layout: SymbolLayout) -> str:
     pad = " " * 4
 
     lines = [pad + ",".join(counts["top"]).center(width, "-")]
-    rows = max(len(counts["left"]), len(counts["right"]), 1)
-    for index in range(rows):
-        left = counts["left"][index] if index < len(counts["left"]) else ""
-        right = counts["right"][index] if index < len(counts["right"]) else ""
+    rows = {pin.y for pin in layout.pins if pin.side in {"left", "right"}}
+    for y in sorted(rows) or [0]:
+        left = ",".join(pin.number for pin in layout.pins if pin.side == "left" and pin.y == y)
+        right = ",".join(pin.number for pin in layout.pins if pin.side == "right" and pin.y == y)
         lines.append(f"{left:>4} |{' ' * width}| {right:<4}")
     lines.append(pad + ",".join(counts["bottom"]).center(width, "-"))
     return "\n".join(lines)

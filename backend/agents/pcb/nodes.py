@@ -1,6 +1,6 @@
 """PCB 封装工作流的主节点与路由。
 
-链路（全确定性，不调用模型）：
+参数确定后的链路（确定性，不调用模型；图片提取见 image_input）：
 
     load_spec → validate_spec → [confirm_spec] → emit_skills
       → run_build → run_verify → run_props → judge → [review_result]
@@ -24,7 +24,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from backend.agents.pcb.assertions import judge
+from backend.agents.pcb.assertions import judge, Assertion
+from backend.agents.pcb.pin_reference import pin_reference_issues
 from backend.agents.pcb.derive import check_clearances, derive_package, summarize
 from backend.agents.pcb.parser import (
     parse_build_log,
@@ -32,10 +33,11 @@ from backend.agents.pcb.parser import (
     parse_verify_log,
     read_logs,
 )
-from backend.agents.pcb.runner import AllegroRun, run_stage
+from backend.agents.pcb.runner import AllegroRun
+from backend.agents.pcb.execution import execute_stage
 from backend.agents.pcb.skill_emitter import check_layers, write_skill_package
 from backend.agents.pcb.spec import PackageSpec
-from backend.agents.pcb.workers import cad_node
+from backend.core.cadence_scheduler import cadence_scheduler, resolve_mode
 from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -83,7 +85,7 @@ async def load_spec_node(state: dict[str, Any]) -> dict[str, Any]:
             "spec": spec.model_dump(),
             "work_dir": str(work_dir),
             "derived_summary": summarize(spec, derived),
-            "warnings": list(derived.warnings),
+            "warnings": [*state.get("warnings", []), *derived.warnings],
             "status": "spec_loaded",
         }
     except Exception as exc:
@@ -100,6 +102,7 @@ async def validate_spec_node(state: dict[str, Any]) -> dict[str, Any]:
     try:
         spec = _spec_of(state)
         issues = check_clearances(spec)
+        issues.extend(pin_reference_issues([p.model_dump() for p in spec.pads], (state.get('image_reading') or {}).get('pin_reference')))
         layer_issues = check_layers()
         if layer_issues:
             issues.extend(f"使用了白名单外的层名：{name}" for name in layer_issues)
@@ -125,6 +128,8 @@ async def emit_skills_node(state: dict[str, Any]) -> dict[str, Any]:
         spec = _spec_of(state)
         derived = derive_package(spec)
         written = write_skill_package(spec, derived, _work_dir_of(state))
+        from backend.agents.pcb.preview import write_preview
+        written.update(write_preview(spec, derived, _work_dir_of(state)))
         logger.info(
             "pcb.skills_emitted",
             spec_name=spec.name,
@@ -143,11 +148,13 @@ async def emit_skills_node(state: dict[str, Any]) -> dict[str, Any]:
 # ── 三阶段执行（原生子进程，走专属线程）──────────────────────────
 
 
-@cad_node
-def _execute_stage(
-    work_dir: str, spec_name: str, stage: str, exe: str | None, timeout: float
+async def _execute_stage(
+    state: dict[str, Any], stage: str
 ) -> AllegroRun:
-    return run_stage(Path(work_dir), spec_name, stage=stage, exe=exe, timeout=timeout)
+    mode = (state.get("execution") or {}).get("mode") or resolve_mode("pcb", state.get("execution_mode"))
+    scheduled = {**state, "execution_mode": mode}
+    return await cadence_scheduler.run(execute_stage, scheduled, stage, mode=mode, kind="pcb",
+                                       drawing_id=state.get("drawing_id", ""), tenant_id=state.get("tenant_id", ""))
 
 
 def _run_to_dict(run: AllegroRun) -> dict[str, Any]:
@@ -157,6 +164,7 @@ def _run_to_dict(run: AllegroRun) -> dict[str, Any]:
         "ok": run.ok,
         "log_path": str(run.log_path),
         "stdout_tail": run.stdout[-2000:],
+        "execution": run.execution,
     }
 
 
@@ -171,15 +179,8 @@ async def _execute_and_capture(
     * 超时 → ``failed``（多半是 SKILL 侧漏了 ``?noConfirm t``）
     * 其他异常 → ``failed``
     """
-    spec_name = state["spec"]["name"]
     try:
-        run = await _execute_stage(
-            state["work_dir"],
-            spec_name,
-            stage,
-            state.get("allegro_exe"),
-            float(state.get("allegro_timeout") or DEFAULT_TIMEOUT),
-        )
+        run = await _execute_stage(state, stage)
     except FileNotFoundError as exc:
         logger.warning("pcb.toolchain_missing", stage=stage, error=str(exc))
         return (
@@ -212,13 +213,14 @@ async def _execute_and_capture(
         return (
             {
                 key: _run_to_dict(run),
+                "execution": run.execution,
                 "errors": _errors(state, f"{stage} 退出码 {run.returncode}"),
                 "status": "failed",
             },
             "failed",
         )
     return (
-        {key: _run_to_dict(run), "status": f"{stage}_done"},
+        {key: _run_to_dict(run), "execution": run.execution, "status": f"{stage}_done"},
         "continue",
     )
 
@@ -263,6 +265,11 @@ async def judge_node(state: dict[str, Any]) -> dict[str, Any]:
             props=parse_props_log(logs["props"]) if state.get("props_run") else None,
             symbol_log=logs["symbol"],
         )
+        reference = (state.get('image_reading') or {}).get('pin_reference')
+        if reference:
+            pin_issues = pin_reference_issues([p.model_dump() for p in spec.pads], reference)
+            verdict.assertions.append(Assertion('脚号与来源顶视引脚图一致', not pin_issues,
+                expected=reference.get('evidence', ''), actual='；'.join(pin_issues) or '逐排位置与脚号一致'))
         logger.info(
             "pcb.judged",
             spec_name=spec.name,
@@ -271,6 +278,7 @@ async def judge_node(state: dict[str, Any]) -> dict[str, Any]:
         )
         return {
             "verdict": verdict.to_dict(),
+            "artifact_paths": _collect_artifacts(state),
             "status": "judged" if verdict.passed else "verdict_failed",
         }
     except Exception as exc:
@@ -284,10 +292,28 @@ async def judge_node(state: dict[str, Any]) -> dict[str, Any]:
 def _collect_artifacts(state: dict[str, Any]) -> dict[str, str]:
     """收拢产物路径：SKILL 装置永远有，Allegro 产物只在跑过执行时才有。"""
     artifacts = dict(state.get("generated_files", {}))
+    report = state.get("extraction_report_path")
+    if report and Path(report).is_file():
+        artifacts["image_reading"] = report
     work_dir = state.get("work_dir")
     spec_name = (state.get("spec") or {}).get("name", "")
     if work_dir and spec_name:
         root = Path(work_dir)
+        spec = _spec_of(state)
+        if spec.pin_layout == "EXPLICIT":
+            import zipfile
+            # Allegro may preserve or lower-case padstack names on disk.
+            paths = []
+            for name in dict.fromkeys(spec.signal_padstack_names.values()):
+                paths.extend(p for p in root.glob("*.pad") if p.stem.lower() == name.lower())
+            if spec.ep_present:
+                paths.extend(p for p in root.glob("*.pad") if p.stem.lower() == spec.ep_padstack_name.lower())
+            if paths:
+                archive = root / "padstacks.zip"
+                with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
+                    for path in paths:
+                        z.write(path, path.name)
+                artifacts["padstacks_zip"] = str(archive)
         for label, path in (
             ("dra", root / f"{spec_name}.dra"),
             ("psm", root / f"{spec_name.lower()}.psm"),

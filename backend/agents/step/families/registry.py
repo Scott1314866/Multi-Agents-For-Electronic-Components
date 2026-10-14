@@ -132,6 +132,17 @@ def reconcile_image_family_classification(
         if float(token_field(token, "confidence", 0.0)) >= 0.80
     ]
     joined_text = " \n ".join(reliable_texts)
+    # Some model replies put the package label in family_id and the registered
+    # template ID in package_type. Repair only a provable role swap, preserving
+    # the original confidence; this does not approve dimensions or topology.
+    raw_label=str(getattr(classification,'family_id',''))
+    template_id=str(getattr(classification,'package_type',''))
+    package_identity=re.sub(r'[^A-Z0-9]','',raw_label.upper())
+    identities={re.sub(r'[^A-Z0-9]','',text.upper()) for text in reliable_texts}
+    if (template_id in image_family_catalog() and raw_label not in image_family_catalog()
+            and re.match(r'^(?:SOT|SOIC|TSSOP|SSOP|MSOP|QFN|UFQFPN|LQFP|QFP)\d',package_identity)
+            and package_identity in identities):
+        classification=classification.model_copy(update={'family_id':template_id,'package_type':raw_label})
 
     def signature_ambiguities(family_id: str, package_pattern: Any, reason: str) -> list[str]:
         """Successful identity confirmation is not a new ambiguity.
@@ -363,21 +374,35 @@ def derive_family_parameters(fused: FusedEvidence) -> FusedEvidence:
     indexed = {item.canonical_name: item for item in parameters}
     derived_names: set[str] = set()
 
-    def add(name: str, value: float, sources: list[FusedParameter], formula: str) -> None:
+    def add(name: str, value: float, sources: list[FusedParameter], formula: str, unit: str = "mm") -> None:
         if name in indexed or not sources:
             return
-        item = _derived_parameter(name, value, "mm", sources, formula)
+        item = _derived_parameter(name, value, unit, sources, formula)
         parameters.append(item)
         indexed[name] = item
         derived_names.add(name)
 
     if fused.family_id == gullwing_ic.FAMILY_ID:
+        if all(name in indexed for name in gullwing_ic.ROW_PARAMETERS[:2]):
+            sources=[indexed[name] for name in gullwing_ic.ROW_PARAMETERS[:2]]
+            add('nominal_pin_count',sum(p.value for p in sources),sources,
+                'negative_side_pin_count+positive_side_pin_count',unit='count')
+        # Legacy scalar slots remain audited defaults, not overrides of either row.
+        for default,pair in (('terminal_width',gullwing_ic.ROW_WIDTH_PARAMETERS),
+                             ('terminal_length',gullwing_ic.ROW_LENGTH_PARAMETERS),
+                             ('terminal_thickness',gullwing_ic.ROW_THICKNESS_PARAMETERS)):
+            if all(name in indexed for name in pair):
+                add(default,indexed[pair[0]].value,[indexed[pair[0]]],f'legacy_default_from_{pair[0]}')
+        if 'pin_span' not in indexed and all(name in indexed for name in gullwing_ic.ROW_PARAMETERS[2:]):
+            sources=[indexed[name] for name in gullwing_ic.ROW_PARAMETERS[2:]]
+            add('pin_span',max(p.value for p in sources),sources,
+                'max(negative_side_pin_span,positive_side_pin_span)')
         if "pin_span" not in indexed and {"nominal_pin_count", "terminal_pitch"}.issubset(indexed):
             count_value = indexed["nominal_pin_count"].value
             count = int(round(count_value))
             # 只有可由双侧对称多脚布局推出的跨度才允许派生。
             # 显式跨度保留给尺寸链门禁检查，不能用推导值覆盖冲突证据。
-            if count >= 4 and count % 2 == 0 and abs(count_value - count) <= 1e-9:
+            if count >= 4 and count % 2 == 0 and abs(count_value - count) <= 1e-9 and not any(name in indexed for name in gullwing_ic.ROW_PARAMETERS) and not re.match(r'^SOT\b|^SOT\d',fused.package_type.strip(),re.I):
                 add(
                     "pin_span",
                     (count // 2 - 1) * indexed["terminal_pitch"].value,

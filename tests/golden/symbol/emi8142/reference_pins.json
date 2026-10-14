@@ -1,0 +1,62 @@
+[
+  {
+    "pin_number": "1",
+    "name": "IN1+",
+    "side": "left",
+    "side_order": 0
+  },
+  {
+    "pin_number": "2",
+    "name": "IN1-",
+    "side": "left",
+    "side_order": 1
+  },
+  {
+    "pin_number": "3",
+    "name": "GND",
+    "side": "left",
+    "side_order": 2
+  },
+  {
+    "pin_number": "4",
+    "name": "IN2+",
+    "side": "left",
+    "side_order": 3
+  },
+  {
+    "pin_number": "5",
+    "name": "IN2-",
+    "side": "left",
+    "side_order": 4
+  },
+  {
+    "pin_number": "10",
+    "name": "OUT1+",
+    "side": "right",
+    "side_order": 0
+  },
+  {
+    "pin_number": "9",
+    "name": "OUT1-",
+    "side": "right",
+    "side_order": 1
+  },
+  {
+    "pin_number": "8",
+    "name": "GND",
+    "side": "right",
+    "side_order": 2
+  },
+  {
+    "pin_number": "7",
+    "name": "OUT2+",
+    "side": "right",
+    "side_order": 3
+  },
+  {
+    "pin_number": "6",
+    "name": "OUT2-",
+    "side": "right",
+    "side_order": 4
+  }
+]
